@@ -1,0 +1,55 @@
+name: LinkKeeper
+options:
+  bundleIdPrefix: com.aabce
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "2630"
+settings:
+  base:
+    DEAD_CODE_STRIPPING: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: YES
+    SWIFT_EMIT_LOC_STRINGS: YES
+
+targets:
+  LinkKeeper:
+    type: application
+    platform: macOS
+    sources:
+      - LinkKeeper
+    info:
+      path: LinkKeeper/Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        NSAppleEventsUsageDescription: "ブラウザからURLとページタイトルを取得するためにApple Eventsを使用します"
+    entitlements:
+      path: LinkKeeper/LinkKeeper.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.network.client: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aabce.LinkKeeper
+        DEVELOPMENT_TEAM: PNKEK75AK4
+        INFOPLIST_KEY_CFBundleDisplayName: LinkKeeper
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.utilities"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "(C) Shinya Ohtani"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "5.0"
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_PREVIEWS: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+schemes:
+  LinkKeeper:
+    build:
+      targets:
+        LinkKeeper: all
+    run:
+      config: Release
+      debugEnabled: false
+    profile:
+      config: Release
