@@ -1,167 +1,133 @@
 import AppKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    var windowController: MainWindowController!
-    private var preferencesWindow: NSWindow?
+    var mainWindow: MainWindow!
+    private var settingsWindow: NSWindow?
+    private let catalog = BrowserCatalog()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         setupMainMenu()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        windowController = MainWindowController()
-        windowController.showWindow(nil)
-        windowController.window?.makeKeyAndOrderFront(nil)
+        mainWindow = MainWindow()
+        mainWindow.showWindow(nil)
+        mainWindow.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        return true
-    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
-        windowController.saveState()
+        mainWindow.saveState()
     }
 
-    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
-        return true
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
+
+    // MARK: - Settings
+
+    @objc private func showSettings(_ sender: Any?) {
+        if let w = settingsWindow { w.makeKeyAndOrderFront(nil); return }
+        let vc = SettingsPanel()
+        let w = NSWindow(contentViewController: vc)
+        w.title = "設定"
+        w.styleMask = [.titled, .closable]
+        w.setContentSize(NSSize(width: 360, height: 100))
+        w.center()
+        w.isReleasedWhenClosed = false
+        w.makeKeyAndOrderFront(nil)
+        settingsWindow = w
     }
 
-    // MARK: - Preferences
-
-    @objc private func showPreferences(_ sender: Any?) {
-        if let preferencesWindow = preferencesWindow {
-            preferencesWindow.makeKeyAndOrderFront(nil)
-            return
-        }
-        let vc = PreferencesViewController()
-        let window = NSWindow(contentViewController: vc)
-        window.title = "設定"
-        window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 360, height: 100))
-        window.center()
-        window.isReleasedWhenClosed = false
-        window.makeKeyAndOrderFront(nil)
-        preferencesWindow = window
-    }
-
-    // MARK: - Main Menu
+    // MARK: - Menu
 
     private func setupMainMenu() {
         let mainMenu = NSMenu()
-
-        // === LinkKeeper メニュー ===
-        let appMenu = NSMenu()
-        appMenu.addItem(NSMenuItem(title: "LinkKeeper について",
-                                   action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
-                                   keyEquivalent: ""))
-        appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "設定…",
-                                   action: #selector(showPreferences(_:)),
-                                   keyEquivalent: ","))
-        appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "LinkKeeper を終了",
-                                   action: #selector(NSApplication.terminate(_:)),
-                                   keyEquivalent: "q"))
-
-        let appMenuItem = NSMenuItem()
-        appMenuItem.submenu = appMenu
-        mainMenu.addItem(appMenuItem)
-
-        // === ファイル ===
-        let fileMenu = NSMenu(title: "ファイル")
-
-        fileMenu.addItem(NSMenuItem(title: "ブラウザからキャプチャ",
-                                    action: #selector(OutlineViewController.captureFromFrontmostBrowser(_:)),
-                                    keyEquivalent: "d"))
-
-        let captureSubmenu = NSMenu()
-        for browser in BrowserCapture.installedBrowsers() {
-            let item = NSMenuItem(title: "\(browser.name) からキャプチャ",
-                                  action: #selector(OutlineViewController.captureFromBrowser(_:)),
-                                  keyEquivalent: "")
-            item.representedObject = browser
-            captureSubmenu.addItem(item)
-        }
-        let captureMenuItem = NSMenuItem(title: "キャプチャ元を選択…", action: nil, keyEquivalent: "")
-        captureMenuItem.submenu = captureSubmenu
-        fileMenu.addItem(captureMenuItem)
-
-        fileMenu.addItem(NSMenuItem(title: "クリップボードのURLから作成",
-                                    action: #selector(OutlineViewController.pasteURLAsBookmark(_:)),
-                                    keyEquivalent: "V"))  // Cmd+Shift+V
-
-        fileMenu.addItem(.separator())
-        fileMenu.addItem(NSMenuItem(title: "新規フォルダ",
-                                    action: #selector(OutlineViewController.newFolder(_:)),
-                                    keyEquivalent: "n"))
-        fileMenu.addItem(.separator())
-        fileMenu.addItem(NSMenuItem(title: "ウィンドウを閉じる",
-                                    action: #selector(NSWindow.performClose(_:)),
-                                    keyEquivalent: "w"))
-
-        let fileMenuItem = NSMenuItem()
-        fileMenuItem.submenu = fileMenu
-        mainMenu.addItem(fileMenuItem)
-
-        // === 編集 ===
-        let editMenu = NSMenu(title: "編集")
-        editMenu.addItem(NSMenuItem(title: "取り消す",
-                                    action: Selector(("undo:")),
-                                    keyEquivalent: "z"))
-        editMenu.addItem(NSMenuItem(title: "やり直す",
-                                    action: Selector(("redo:")),
-                                    keyEquivalent: "Z"))
-        editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: "カット",
-                                    action: #selector(NSText.cut(_:)),
-                                    keyEquivalent: "x"))
-        editMenu.addItem(NSMenuItem(title: "コピー",
-                                    action: #selector(NSText.copy(_:)),
-                                    keyEquivalent: "c"))
-        editMenu.addItem(NSMenuItem(title: "ペースト",
-                                    action: #selector(NSText.paste(_:)),
-                                    keyEquivalent: "v"))
-        editMenu.addItem(NSMenuItem(title: "URLを貼り付けてブックマーク作成",
-                                    action: #selector(OutlineViewController.pasteURLAsBookmark(_:)),
-                                    keyEquivalent: "V"))  // Cmd+Shift+V
-        editMenu.addItem(NSMenuItem(title: "削除",
-                                    action: #selector(OutlineViewController.deleteSelectedItems(_:)),
-                                    keyEquivalent: "\u{08}"))
-        editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: "すべてを選択",
-                                    action: #selector(NSText.selectAll(_:)),
-                                    keyEquivalent: "a"))
-
-        editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: "情報を編集…",
-                                    action: #selector(OutlineViewController.editSelectedBookmark(_:)),
-                                    keyEquivalent: "e"))
-        editMenu.addItem(NSMenuItem(title: "名前を変更",
-                                    action: #selector(OutlineViewController.renameFromMenu(_:)),
-                                    keyEquivalent: "\r"))
-
-        // カラーラベルサブメニュー
-        editMenu.addItem(.separator())
-        let colorMenuItem = NSMenuItem(title: "カラーラベル", action: nil, keyEquivalent: "")
-        // delegate で動的に構築するため、初期メニューはプレースホルダー
-        colorMenuItem.submenu = OutlineViewController.buildColorTagMenu()
-        editMenu.addItem(colorMenuItem)
-
-        let editMenuItem = NSMenuItem()
-        editMenuItem.submenu = editMenu
-        mainMenu.addItem(editMenuItem)
-
-        // === 表示 ===
-        let viewMenu = NSMenu(title: "表示")
-        viewMenu.addItem(NSMenuItem(title: "フローティング切替",
-                                    action: #selector(MainWindowController.toggleFloating(_:)),
-                                    keyEquivalent: "f"))
-
-        let viewMenuItem = NSMenuItem()
-        viewMenuItem.submenu = viewMenu
-        mainMenu.addItem(viewMenuItem)
-
+        mainMenu.addItem(buildAppMenu())
+        mainMenu.addItem(buildFileMenu())
+        mainMenu.addItem(buildEditMenu())
+        mainMenu.addItem(buildViewMenu())
         NSApp.mainMenu = mainMenu
+    }
+
+    private func buildAppMenu() -> NSMenuItem {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "LinkKeeper について",
+                                action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "設定…", action: #selector(showSettings(_:)), keyEquivalent: ","))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "LinkKeeper を終了",
+                                action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        let item = NSMenuItem()
+        item.submenu = menu
+        return item
+    }
+
+    private func buildFileMenu() -> NSMenuItem {
+        let menu = NSMenu(title: "ファイル")
+        menu.addItem(NSMenuItem(title: "ブラウザからキャプチャ",
+                                action: #selector(BookmarkList.captureFromDefault(_:)), keyEquivalent: "d"))
+        menu.addItem(buildCaptureSubmenu())
+        menu.addItem(NSMenuItem(title: "クリップボードのURLから作成",
+                                action: #selector(BookmarkList.pasteURLAsBookmark(_:)), keyEquivalent: "V"))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "新規フォルダ",
+                                action: #selector(BookmarkList.newFolder(_:)), keyEquivalent: "n"))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "ウィンドウを閉じる",
+                                action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        let item = NSMenuItem()
+        item.submenu = menu
+        return item
+    }
+
+    private func buildEditMenu() -> NSMenuItem {
+        let menu = NSMenu(title: "編集")
+        menu.addItem(NSMenuItem(title: "取り消す", action: Selector(("undo:")), keyEquivalent: "z"))
+        menu.addItem(NSMenuItem(title: "やり直す", action: Selector(("redo:")), keyEquivalent: "Z"))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "カット", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        menu.addItem(NSMenuItem(title: "コピー", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        menu.addItem(NSMenuItem(title: "ペースト", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        menu.addItem(NSMenuItem(title: "削除",
+                                action: #selector(BookmarkList.deleteSelectedItems(_:)), keyEquivalent: "\u{08}"))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "すべてを選択", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "情報を編集…",
+                                action: #selector(BookmarkList.editSelectedBookmark(_:)), keyEquivalent: "e"))
+        menu.addItem(NSMenuItem(title: "名前を変更",
+                                action: #selector(BookmarkList.renameFromMenu(_:)), keyEquivalent: "\r"))
+        menu.addItem(.separator())
+        let colorItem = NSMenuItem(title: "カラーラベル", action: nil, keyEquivalent: "")
+        colorItem.submenu = ColorTagMenu(currentTag: -1, target: nil,
+                                          action: #selector(BookmarkList.setColorTagAction(_:))).menu
+        menu.addItem(colorItem)
+        let item = NSMenuItem()
+        item.submenu = menu
+        return item
+    }
+
+    private func buildViewMenu() -> NSMenuItem {
+        let menu = NSMenu(title: "表示")
+        menu.addItem(NSMenuItem(title: "フローティング切替",
+                                action: #selector(MainWindow.toggleFloating(_:)), keyEquivalent: "f"))
+        let item = NSMenuItem()
+        item.submenu = menu
+        return item
+    }
+
+    private func buildCaptureSubmenu() -> NSMenuItem {
+        let sub = NSMenu()
+        for browser in catalog.installed {
+            let item = NSMenuItem(title: "\(browser.name) からキャプチャ",
+                                  action: #selector(BookmarkList.captureFromBrowser(_:)), keyEquivalent: "")
+            item.representedObject = BrowserWrapper(browser)
+            sub.addItem(item)
+        }
+        let item = NSMenuItem(title: "キャプチャ元を選択…", action: nil, keyEquivalent: "")
+        item.submenu = sub
+        return item
     }
 }
