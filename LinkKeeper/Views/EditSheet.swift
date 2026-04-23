@@ -12,6 +12,7 @@ class EditSheet: NSViewController {
     private var faviconView: NSImageView!
 
     var onSave: (() -> Void)?
+    var onFaviconReload: ((_ node: BookmarkNode, _ completion: @escaping () -> Void) -> Void)?
 
     init(node: BookmarkNode, mode: Mode = .edit) {
         self.node = node
@@ -28,8 +29,8 @@ class EditSheet: NSViewController {
         buildHeader(in: container)
         let urlScrollView = buildURLField(in: container)
         let dateValue = buildDateRow(in: container, below: urlScrollView)
-        buildColorRow(in: container, below: dateValue)
-        buildButtons(in: container)
+        let sep = buildColorRow(in: container, below: dateValue)
+        buildButtons(in: container, below: sep)
         self.view = container
         focusTitleIfCreate()
     }
@@ -54,6 +55,17 @@ class EditSheet: NSViewController {
         dismiss()
     }
 
+    @objc private func reloadFavicon(_ sender: NSButton) {
+        sender.isEnabled = false
+        sender.image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: nil)
+        onFaviconReload?(node) { [weak self] in
+            guard let self = self else { return }
+            self.updateFavicon()
+            sender.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
+            sender.isEnabled = true
+        }
+    }
+
     @objc private func cancelAction(_ sender: Any?) {
         dismiss()
     }
@@ -75,6 +87,19 @@ class EditSheet: NSViewController {
         updateFavicon()
         container.addSubview(faviconView)
 
+        // favicon リロードボタン（フォルダ以外）
+        let reloadBtn = NSButton()
+        reloadBtn.translatesAutoresizingMaskIntoConstraints = false
+        reloadBtn.bezelStyle = .accessoryBarAction
+        reloadBtn.isBordered = false
+        reloadBtn.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload favicon")
+        reloadBtn.imagePosition = .imageOnly
+        reloadBtn.toolTip = "ファビコンを再取得"
+        reloadBtn.target = self
+        reloadBtn.action = #selector(reloadFavicon(_:))
+        reloadBtn.isHidden = node.isFolder
+        container.addSubview(reloadBtn)
+
         titleField = NSTextField()
         titleField.translatesAutoresizingMaskIntoConstraints = false
         titleField.stringValue = node.title
@@ -89,7 +114,11 @@ class EditSheet: NSViewController {
             faviconView.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
             faviconView.widthAnchor.constraint(equalToConstant: 40),
             faviconView.heightAnchor.constraint(equalToConstant: 40),
-            titleField.leadingAnchor.constraint(equalTo: faviconView.trailingAnchor, constant: 12),
+            reloadBtn.leadingAnchor.constraint(equalTo: faviconView.trailingAnchor, constant: 2),
+            reloadBtn.bottomAnchor.constraint(equalTo: faviconView.bottomAnchor),
+            reloadBtn.widthAnchor.constraint(equalToConstant: 20),
+            reloadBtn.heightAnchor.constraint(equalToConstant: 20),
+            titleField.leadingAnchor.constraint(equalTo: reloadBtn.trailingAnchor, constant: 4),
             titleField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
             titleField.centerYAnchor.constraint(equalTo: faviconView.centerYAnchor),
         ])
@@ -157,7 +186,8 @@ class EditSheet: NSViewController {
         return value
     }
 
-    private func buildColorRow(in container: NSView, below anchor: NSView) {
+    @discardableResult
+    private func buildColorRow(in container: NSView, below anchor: NSView) -> NSBox {
         let label = makeLabel("カラー")
         container.addSubview(label)
 
@@ -185,9 +215,10 @@ class EditSheet: NSViewController {
             sep.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
             sep.topAnchor.constraint(equalTo: colorPopup.bottomAnchor, constant: 16),
         ])
+        return sep
     }
 
-    private func buildButtons(in container: NSView) {
+    private func buildButtons(in container: NSView, below sep: NSView) {
         let cancel = NSButton(title: "キャンセル", target: self, action: #selector(cancelAction(_:)))
         cancel.translatesAutoresizingMaskIntoConstraints = false
         cancel.bezelStyle = .rounded
@@ -203,6 +234,7 @@ class EditSheet: NSViewController {
 
         NSLayoutConstraint.activate([
             confirm.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            confirm.topAnchor.constraint(equalTo: sep.bottomAnchor, constant: 12),
             confirm.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
             confirm.widthAnchor.constraint(equalToConstant: 80),
             cancel.trailingAnchor.constraint(equalTo: confirm.leadingAnchor, constant: -8),
@@ -214,6 +246,7 @@ class EditSheet: NSViewController {
     // MARK: - Helpers
 
     private func updateFavicon() {
+        faviconView.contentTintColor = nil
         if let data = node.faviconData, let img = NSImage(data: data) {
             faviconView.image = img
         } else if node.isFolder {

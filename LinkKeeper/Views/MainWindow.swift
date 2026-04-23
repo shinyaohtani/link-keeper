@@ -1,6 +1,6 @@
 import AppKit
 
-/// メインウィンドウ。ツールバー・フローティング・状態復元を管理する。
+/// メインウィンドウ。ツールバー（Liquid Glass）・フローティング・状態復元を管理する。
 class MainWindow: NSWindowController, NSWindowDelegate {
     private let store = BookmarkStore()
     private let catalog = BrowserCatalog()
@@ -18,13 +18,14 @@ class MainWindow: NSWindowController, NSWindowDelegate {
             backing: .buffered, defer: false
         )
         w.title = "LinkKeeper"
-        w.minSize = NSSize(width: 300, height: 400)
+        w.minSize = NSSize(width: 200, height: 300)
         w.isReleasedWhenClosed = false
         super.init(window: w)
         w.delegate = self
 
         bookmarkList = BookmarkList(store: store, catalog: catalog)
         w.contentViewController = bookmarkList
+
         setupToolbar()
         restoreFrame()
         restoreFloating()
@@ -73,9 +74,7 @@ class MainWindow: NSWindowController, NSWindowDelegate {
                 let x = vis.origin.x + (vis.width - width) / 2
                 let y = vis.origin.y + (vis.height - height) / 2
                 w.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
-            } else {
-                w.center()
-            }
+            } else { w.center() }
         }
         w.setFrameAutosaveName(autosaveName)
     }
@@ -102,37 +101,35 @@ class MainWindow: NSWindowController, NSWindowDelegate {
 
 // MARK: - NSToolbarDelegate
 
-private let captureID  = NSToolbarItem.Identifier("Capture")
-private let folderID   = NSToolbarItem.Identifier("NewFolder")
-private let floatID    = NSToolbarItem.Identifier("Float")
+private let captureID = NSToolbarItem.Identifier("Capture")
+private let folderID  = NSToolbarItem.Identifier("NewFolder")
+private let floatID   = NSToolbarItem.Identifier("Float")
 
 extension MainWindow: NSToolbarDelegate {
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         switch id {
-        case captureID:
-            return buildCaptureItem()
-        case folderID:
-            return buildFolderItem()
-        case floatID:
-            return buildFloatItem()
-        default:
-            return nil
+        case captureID: return buildCaptureItem()
+        case folderID:  return buildFolderItem()
+        case floatID:   return buildFloatItem()
+        default: return nil
         }
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [captureID, folderID, .flexibleSpace, floatID]
+        [captureID, folderID, floatID]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [captureID, folderID, floatID, .flexibleSpace, .space]
+        [captureID, folderID, floatID]
     }
+
+    // MARK: - Toolbar Items
 
     private func buildCaptureItem() -> NSToolbarItem {
         let item = NSMenuToolbarItem(itemIdentifier: captureID)
         item.label = "追加"
-        item.toolTip = "ブラウザからURLをキャプチャ"
+        item.toolTip = "ブラウザからURLをキャプチャ（▼ でブラウザ選択）"
         item.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "Add")
         item.target = bookmarkList
         item.action = #selector(BookmarkList.captureFromDefault(_:))
@@ -186,10 +183,4 @@ extension MainWindow: NSToolbarDelegate {
         menu.addItem(clip)
         return menu
     }
-}
-
-/// NSMenuItem.representedObject は AnyObject なので struct Browser をラップする。
-class BrowserWrapper: NSObject {
-    let browser: Browser
-    init(_ browser: Browser) { self.browser = browser; super.init() }
 }

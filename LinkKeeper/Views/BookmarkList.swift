@@ -5,9 +5,15 @@ class BookmarkList: NSViewController {
     private(set) var outlineView: BookmarkOutline!
     private var scrollView: NSScrollView!
     let store: BookmarkStore
-    private let catalog: BrowserCatalog
+    let catalog: BrowserCatalog
     private let expandedKey = "LinkKeeper.expandedNodeIDs"
     private let bookmarkUTI = NSPasteboard.PasteboardType("com.linkkeeper.bookmark-id")
+    private let dateFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        return f
+    }()
 
     init(store: BookmarkStore, catalog: BrowserCatalog) {
         self.store = store
@@ -29,16 +35,15 @@ class BookmarkList: NSViewController {
         restoreExpandedState()
         repairUrlTitles()
     }
-}
 
-// MARK: - Undo Operations
+    // MARK: - Undo + Insert with Lookup（統合）
 
-extension BookmarkList {
-    func performInsert(_ node: BookmarkNode, into parent: BookmarkNode?, at idx: Int, actionName: String) {
+    func performInsert(_ node: BookmarkNode, into parent: BookmarkNode?, at idx: Int, actionName: String, lookup: Bool = false) {
         undoManager?.registerUndo(withTarget: self) { $0.performRemove(node, actionName: actionName) }
         undoManager?.setActionName(actionName)
         store.insertNode(node, into: parent, at: idx)
         reloadUI()
+        if lookup { lookupAndUpdate(node) }
     }
 
     func performRemove(_ node: BookmarkNode, actionName: String) {
@@ -60,10 +65,54 @@ extension BookmarkList {
         reloadUI()
     }
 
-    private func reloadUI() {
+    func reloadUI() {
         outlineView.reloadData()
         restoreExpandedState()
         store.save()
+    }
+
+    // MARK: - Page Info Lookup（1箇所に統合）
+
+    /// favicon を再取得し、Undo 登録する。完了時に completion を呼ぶ。
+    func reloadFavicon(for node: BookmarkNode, completion: @escaping () -> Void) {
+        guard let urlStr = node.urlString else { completion(); return }
+        let oldData = node.faviconData
+        PageLookup(urlString: urlStr).result { [weak self] info in
+            guard let self = self else { completion(); return }
+            guard let newData = info.faviconData else {
+                NSSound.beep()
+                completion()
+                return
+            }
+            node.faviconData = newData
+            self.undoManager?.registerUndo(withTarget: self) { target in
+                node.faviconData = oldData
+                target.store.save()
+                target.reloadUI()
+            }
+            self.undoManager?.setActionName("ファビコン再取得")
+            self.store.save()
+            let row = self.outlineView.row(forItem: node)
+            if row >= 0 {
+                self.outlineView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
+            }
+            completion()
+        }
+    }
+
+    func lookupAndUpdate(_ node: BookmarkNode) {
+        guard let urlStr = node.urlString else { return }
+        PageLookup(urlString: urlStr).result { [weak self] info in
+            guard let self = self else { return }
+            var changed = false
+            if let title = info.title, node.title == node.host { node.title = title; changed = true }
+            if let data = info.faviconData { node.faviconData = data; changed = true }
+            guard changed else { return }
+            self.store.save()
+            let row = self.outlineView.row(forItem: node)
+            guard row >= 0 else { return }
+            self.outlineView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
+        }
     }
 }
 
@@ -71,7 +120,8 @@ extension BookmarkList {
 
 extension BookmarkList {
     @objc func newFolder(_ sender: Any?) {
-        let (parent, idx) = insertionPoint()
+        let selected = selectedNode()
+        let (parent, idx) = store.insertionPoint(for: selected)
         let folder = BookmarkNode(title: "新規フォルダ", isFolder: true)
         performInsert(folder, into: parent, at: idx, actionName: "新規フォルダ")
         if let parent = parent { outlineView.expandItem(parent) }
@@ -79,22 +129,16 @@ extension BookmarkList {
     }
 
     @objc func captureFromDefault(_ sender: Any?) {
-        let settingsPanel = SettingsPanel()
-        _ = settingsPanel.view  // load defaults
-        if let id = settingsPanel.defaultBundleID,
-           let browser = catalog.browser(for: id) {
+        let settings = SettingsPanel()
+        _ = settings.view
+        if let id = settings.defaultBundleID, let browser = catalog.browser(for: id) {
             guard let page = browser.frontPage else {
-                showAlert("\(browser.name) からURLを取得できませんでした",
-                          info: "\(browser.name) が起動していてページが表示されていることを確認してください。")
-                return
+                showCaptureError(browser.name); return
             }
-            insertCapturedPage(page)
-            return
+            insertCapturedPage(page); return
         }
         guard let result = catalog.captureFromFrontmost() else {
-            showAlert("ブラウザからURLを取得できませんでした",
-                      info: "ブラウザが起動していてページが表示されていることを確認してください。")
-            return
+            showCaptureError(nil); return
         }
         insertCapturedPage(result.page)
     }
@@ -102,9 +146,7 @@ extension BookmarkList {
     @objc func captureFromBrowser(_ sender: NSMenuItem) {
         guard let wrapper = sender.representedObject as? BrowserWrapper else { return }
         guard let page = wrapper.browser.frontPage else {
-            showAlert("\(wrapper.browser.name) からURLを取得できませんでした",
-                      info: "\(wrapper.browser.name) が起動していてページが表示されていることを確認してください。")
-            return
+            showCaptureError(wrapper.browser.name); return
         }
         insertCapturedPage(page)
     }
@@ -114,11 +156,9 @@ extension BookmarkList {
         let str = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? pb.string(forType: .URL)?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let urlStr = str, urlStr.hasPrefix("http://") || urlStr.hasPrefix("https://") else {
-            NSSound.beep()
-            return
+            NSSound.beep(); return
         }
-        let domain = URL(string: urlStr)?.host ?? urlStr
-        let node = BookmarkNode(title: domain, urlString: urlStr)
+        let node = BookmarkNode(title: URL(string: urlStr)?.host ?? urlStr, urlString: urlStr)
         showCreateSheet(for: node)
     }
 
@@ -143,19 +183,29 @@ extension BookmarkList {
     }
 
     @objc func editSelectedBookmark(_ sender: Any?) {
-        guard let node = selectedNodes().first else { return }
+        guard let node = selectedNode() else { return }
         showEditSheet(for: node)
     }
 
     @objc func renameFromMenu(_ sender: Any?) { beginEditingSelectedItem() }
 
     @objc func setColorTagAction(_ sender: NSMenuItem) {
-        for node in selectedNodes() {
-            node.colorTag = sender.tag
-            node.recordEdit()
-        }
+        for node in selectedNodes() { node.colorTag = sender.tag; node.recordEdit() }
         store.save()
         outlineView.reloadData()
+    }
+
+    @objc func openInBrowser(_ sender: NSMenuItem) {
+        guard let req = sender.representedObject as? OpenRequest,
+              let urlStr = req.node.urlString, let url = URL(string: urlStr) else { return }
+        req.node.recordAccess()
+        store.save()
+        req.browser.open(url: url)
+    }
+
+    @objc func editContextItem(_ sender: NSMenuItem) {
+        guard let node = selectedNode() else { return }
+        showEditSheet(for: node)
     }
 
     func beginEditingSelectedItem() {
@@ -171,69 +221,8 @@ extension BookmarkList {
 
 extension BookmarkList {
     func contextMenu(for row: Int) -> NSMenu {
-        let menu = NSMenu()
-        guard row >= 0, let node = outlineView.item(atRow: row) as? BookmarkNode else {
-            menu.addItem(NSMenuItem(title: "新規フォルダ", action: #selector(newFolder(_:)), keyEquivalent: ""))
-            menu.items.last?.target = self
-            return menu
-        }
-        addBrowserItems(to: menu, for: node)
-        addColorTagItem(to: menu, for: node)
-        addEditItems(to: menu, for: node)
-        menu.addItem(.separator())
-        let folderItem = NSMenuItem(title: "新規フォルダ", action: #selector(newFolder(_:)), keyEquivalent: "")
-        folderItem.target = self
-        menu.addItem(folderItem)
-        return menu
-    }
-
-    private func addBrowserItems(to menu: NSMenu, for node: BookmarkNode) {
-        guard !node.isFolder, let urlStr = node.urlString, URL(string: urlStr) != nil else { return }
-        for browser in catalog.installed {
-            let item = NSMenuItem(title: "\(browser.name) で開く",
-                                  action: #selector(openInBrowser(_:)), keyEquivalent: "")
-            item.representedObject = OpenRequest(node: node, browser: browser)
-            item.target = self
-            menu.addItem(item)
-        }
-        menu.addItem(.separator())
-    }
-
-    private func addColorTagItem(to menu: NSMenu, for node: BookmarkNode) {
-        let colorItem = NSMenuItem(title: "カラーラベル", action: nil, keyEquivalent: "")
-        colorItem.submenu = ColorTagMenu(
-            currentTag: node.colorTag, target: self, action: #selector(setColorTagAction(_:))
-        ).menu
-        menu.addItem(colorItem)
-        menu.addItem(.separator())
-    }
-
-    private func addEditItems(to menu: NSMenu, for node: BookmarkNode) {
-        let edit = NSMenuItem(title: "情報を編集…", action: #selector(editContextItem(_:)), keyEquivalent: "")
-        edit.representedObject = node
-        edit.target = self
-        menu.addItem(edit)
-
-        let rename = NSMenuItem(title: "名前を変更", action: #selector(renameFromMenu(_:)), keyEquivalent: "")
-        rename.target = self
-        menu.addItem(rename)
-
-        let delete = NSMenuItem(title: "削除", action: #selector(deleteSelectedItems(_:)), keyEquivalent: "")
-        delete.target = self
-        menu.addItem(delete)
-    }
-
-    @objc private func openInBrowser(_ sender: NSMenuItem) {
-        guard let req = sender.representedObject as? OpenRequest,
-              let urlStr = req.node.urlString, let url = URL(string: urlStr) else { return }
-        req.node.recordAccess()
-        store.save()
-        req.browser.open(url: url)
-    }
-
-    @objc private func editContextItem(_ sender: NSMenuItem) {
-        guard let node = sender.representedObject as? BookmarkNode else { return }
-        showEditSheet(for: node)
+        let node = row >= 0 ? outlineView.item(atRow: row) as? BookmarkNode : nil
+        return ContextMenu(node: node, catalog: catalog, target: self).menu
     }
 }
 
@@ -242,28 +231,28 @@ extension BookmarkList {
 extension BookmarkList {
     func showEditSheet(for node: BookmarkNode) {
         let vc = EditSheet(node: node, mode: .edit)
-        vc.onSave = { [weak self] in
-            self?.store.save()
-            self?.outlineView.reloadData()
-            self?.restoreExpandedState()
+        vc.onSave = { [weak self] in self?.reloadUI() }
+        vc.onFaviconReload = { [weak self] node, completion in
+            self?.reloadFavicon(for: node, completion: completion)
         }
-        let w = NSWindow(contentViewController: vc)
-        w.title = node.isFolder ? "フォルダを編集" : "ブックマークを編集"
-        w.styleMask = [.titled, .closable]
-        view.window?.beginSheet(w)
+        presentSheet(vc, title: node.isFolder ? "フォルダを編集" : "ブックマークを編集")
     }
 
     private func showCreateSheet(for node: BookmarkNode) {
         let vc = EditSheet(node: node, mode: .create)
         vc.onSave = { [weak self] in
             guard let self = self else { return }
-            let (parent, idx) = self.insertionPoint()
-            self.performInsert(node, into: parent, at: idx, actionName: "ブックマーク追加")
+            let selected = self.selectedNode()
+            let (parent, idx) = self.store.insertionPoint(for: selected)
+            self.performInsert(node, into: parent, at: idx, actionName: "ブックマーク追加", lookup: true)
             self.selectRow(for: node)
-            self.fetchPageInfo(for: node)
         }
+        presentSheet(vc, title: "ブックマークを作成")
+    }
+
+    private func presentSheet(_ vc: NSViewController, title: String) {
         let w = NSWindow(contentViewController: vc)
-        w.title = "ブックマークを作成"
+        w.title = title
         w.styleMask = [.titled, .closable]
         view.window?.beginSheet(w)
     }
@@ -299,38 +288,13 @@ extension BookmarkList {
     }
 }
 
-// MARK: - URL Title Repair
-
-extension BookmarkList {
-    private func repairUrlTitles() {
-        repairNodes(store.rootNodes)
-        store.save()
-        outlineView.reloadData()
-    }
-
-    private func repairNodes(_ nodes: [BookmarkNode]) {
-        for node in nodes {
-            if let children = node.children { repairNodes(children) }
-            guard !node.isFolder, let urlStr = node.urlString,
-                  node.title == urlStr || node.title.hasPrefix("http://") || node.title.hasPrefix("https://")
-            else { continue }
-            if let host = URL(string: urlStr)?.host { node.title = host }
-            fetchPageInfo(for: node)
-        }
-    }
-}
-
 // MARK: - Private Helpers
 
 extension BookmarkList {
-    private func insertionPoint() -> (parent: BookmarkNode?, idx: Int) {
+    private func selectedNode() -> BookmarkNode? {
         let row = outlineView.selectedRow
-        guard row >= 0, let sel = outlineView.item(atRow: row) as? BookmarkNode else {
-            return (nil, store.rootNodes.count)
-        }
-        if sel.isFolder { return (sel, sel.children?.count ?? 0) }
-        let parent = store.parent(of: sel)
-        return (parent, (store.index(of: sel, in: parent) ?? 0) + 1)
+        guard row >= 0 else { return nil }
+        return outlineView.item(atRow: row) as? BookmarkNode
     }
 
     private func selectedNodes() -> [BookmarkNode] {
@@ -345,32 +309,11 @@ extension BookmarkList {
     }
 
     private func insertCapturedPage(_ page: CapturedPage) {
-        let (parent, idx) = insertionPoint()
+        let selected = selectedNode()
+        let (parent, idx) = store.insertionPoint(for: selected)
         let node = BookmarkNode(title: page.title, urlString: page.url)
-        performInsert(node, into: parent, at: idx, actionName: "ブックマーク追加")
+        performInsert(node, into: parent, at: idx, actionName: "ブックマーク追加", lookup: true)
         selectRow(for: node)
-        fetchPageInfo(for: node)
-    }
-
-    private func fetchPageInfo(for node: BookmarkNode) {
-        guard let urlStr = node.urlString else { return }
-        PageLookup(urlString: urlStr).result { [weak self] info in
-            guard let self = self else { return }
-            var changed = false
-            if let title = info.title, node.title == URL(string: urlStr)?.host {
-                node.title = title
-                changed = true
-            }
-            if let data = info.faviconData {
-                node.faviconData = data
-                changed = true
-            }
-            guard changed else { return }
-            self.store.save()
-            let row = self.outlineView.row(forItem: node)
-            guard row >= 0 else { return }
-            self.outlineView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
-        }
     }
 
     private func selectRow(for node: BookmarkNode) {
@@ -380,24 +323,38 @@ extension BookmarkList {
     }
 
     private func selectAndEdit(_ node: BookmarkNode) {
-        let row = outlineView.row(forItem: node)
-        guard row >= 0 else { return }
-        outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        selectRow(for: node)
         DispatchQueue.main.async {
+            let row = self.outlineView.row(forItem: node)
+            guard row >= 0 else { return }
             (self.outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? BookmarkCell)?.beginEditing()
         }
     }
 
-    private func showAlert(_ msg: String, info: String) {
+    private func showCaptureError(_ name: String?) {
+        let browser = name ?? "ブラウザ"
         let alert = NSAlert()
-        alert.messageText = msg
-        alert.informativeText = info
+        alert.messageText = "\(browser) からURLを取得できませんでした"
+        alert.informativeText = "\(browser) が起動していてページが表示されていることを確認してください。"
         alert.runModal()
     }
 
+    private func repairUrlTitles() {
+        repairNodes(store.rootNodes)
+        store.save()
+        outlineView.reloadData()
+    }
+
+    private func repairNodes(_ nodes: [BookmarkNode]) {
+        for node in nodes {
+            if let children = node.children { repairNodes(children) }
+            guard node.needsTitleRepair else { continue }
+            if let host = node.host { node.title = host }
+            lookupAndUpdate(node)
+        }
+    }
+
     private func configureOutlineView() {
-        outlineView.autosaveName = "LinkKeeperOutline"
-        outlineView.autosaveTableColumns = true
         outlineView.usesAlternatingRowBackgroundColors = false
         outlineView.allowsMultipleSelection = true
         outlineView.allowsEmptySelection = true
@@ -421,6 +378,10 @@ extension BookmarkList {
         dateCol.maxWidth = 160
         dateCol.resizingMask = .userResizingMask
         outlineView.addTableColumn(dateCol)
+
+        // autosave はカラム追加後に設定（保存済み幅の復元のため）
+        outlineView.autosaveName = "LinkKeeperOutline"
+        outlineView.autosaveTableColumns = true
 
         outlineView.dataSource = self
         outlineView.delegate = self
@@ -483,7 +444,8 @@ extension BookmarkList: NSOutlineViewDataSource {
             return validateInternalDrop(item: item, idx: idx, pb: pb)
         }
         if pb.availableType(from: [.init("public.url"), .URL, .string]) != nil {
-            return validateExternalDrop(item: item, idx: idx)
+            if idx == NSOutlineViewDropOnItemIndex, let t = item as? BookmarkNode, !t.isFolder { return [] }
+            return .copy
         }
         return []
     }
@@ -513,14 +475,9 @@ extension BookmarkList: NSOutlineViewDataSource {
         return .move
     }
 
-    private func validateExternalDrop(item: Any?, idx: Int) -> NSDragOperation {
-        if idx == NSOutlineViewDropOnItemIndex, let t = item as? BookmarkNode, !t.isFolder { return [] }
-        return .copy
-    }
-
     private func acceptInternalDrop(items: [NSPasteboardItem], parent: BookmarkNode?, targetIdx: Int) -> Bool {
-        let ids = items.compactMap { $0.string(forType: bookmarkUTI).flatMap(UUID.init) }
-        let nodes = ids.compactMap { store.findNode(by: $0) }
+        let nodes = items.compactMap { $0.string(forType: bookmarkUTI).flatMap(UUID.init) }
+            .compactMap { store.findNode(by: $0) }
         guard !nodes.isEmpty else { return false }
 
         undoManager?.beginUndoGrouping()
@@ -543,9 +500,7 @@ extension BookmarkList: NSOutlineViewDataSource {
     private func acceptExternalDrop(pb: NSPasteboard, parent: BookmarkNode?, targetIdx: Int) -> Bool {
         var urls: [(url: String, title: String?)] = []
         if let nsurls = pb.readObjects(forClasses: [NSURL.self]) as? [NSURL] {
-            for nsurl in nsurls {
-                if let s = nsurl.absoluteString { urls.append((url: s, title: nil)) }
-            }
+            for u in nsurls { if let s = u.absoluteString { urls.append((url: s, title: nil)) } }
         }
         if urls.isEmpty, let str = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
            str.hasPrefix("http://") || str.hasPrefix("https://") {
@@ -556,13 +511,11 @@ extension BookmarkList: NSOutlineViewDataSource {
         let pbTitle = pb.string(forType: .init("public.url-name"))
         undoManager?.beginUndoGrouping()
         var insertIdx = targetIdx
-        for urlInfo in urls {
-            let domain = URL(string: urlInfo.url)?.host ?? urlInfo.url
-            let title = urlInfo.title ?? pbTitle ?? domain
-            let node = BookmarkNode(title: title, urlString: urlInfo.url)
-            performInsert(node, into: parent, at: insertIdx, actionName: "ドロップ")
+        for info in urls {
+            let domain = URL(string: info.url)?.host ?? info.url
+            let node = BookmarkNode(title: info.title ?? pbTitle ?? domain, urlString: info.url)
+            performInsert(node, into: parent, at: insertIdx, actionName: "ドロップ", lookup: true)
             insertIdx += 1
-            fetchPageInfo(for: node)
         }
         undoManager?.endUndoGrouping()
         undoManager?.setActionName("ドロップ")
@@ -575,37 +528,32 @@ extension BookmarkList: NSOutlineViewDataSource {
 extension BookmarkList: NSOutlineViewDelegate {
     func outlineView(_ ov: NSOutlineView, viewFor col: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? BookmarkNode, let column = col else { return nil }
-        if column.identifier.rawValue == "TitleColumn" { return titleCellView(for: node) }
-        if column.identifier.rawValue == "DateColumn" { return dateCellView(for: node) }
+        if column.identifier.rawValue == "TitleColumn" { return titleCell(for: node) }
+        if column.identifier.rawValue == "DateColumn" { return dateCell(for: node) }
         return nil
     }
 
     func outlineView(_ ov: NSOutlineView, shouldSelectItem item: Any) -> Bool { true }
 
-    private func titleCellView(for node: BookmarkNode) -> BookmarkCell {
+    private func titleCell(for node: BookmarkNode) -> BookmarkCell {
         let cellID = NSUserInterfaceItemIdentifier("BookmarkCell")
         let cell = outlineView.makeView(withIdentifier: cellID, owner: self) as? BookmarkCell ?? BookmarkCell()
         cell.identifier = cellID
         cell.configure(with: node)
         cell.onTitleEdited = { [weak self] title in
-            node.title = title
-            node.recordEdit()
-            self?.store.save()
+            node.title = title; node.recordEdit(); self?.store.save()
         }
         return cell
     }
 
-    private func dateCellView(for node: BookmarkNode) -> NSTableCellView {
+    private func dateCell(for node: BookmarkNode) -> NSTableCellView {
         let cellID = NSUserInterfaceItemIdentifier("DateCell")
         if let reused = outlineView.makeView(withIdentifier: cellID, owner: self) as? NSTableCellView {
-            let fmt = DateFormatter()
-            fmt.dateStyle = .short
-            fmt.timeStyle = .short
-            reused.textField?.stringValue = fmt.string(from: node.dateAdded)
+            reused.textField?.stringValue = dateFormat.string(from: node.dateAdded)
             return reused
         }
         let cell = NSTableCellView()
-        let tf = NSTextField(labelWithString: "")
+        let tf = NSTextField(labelWithString: dateFormat.string(from: node.dateAdded))
         tf.translatesAutoresizingMaskIntoConstraints = false
         tf.font = NSFont.systemFont(ofSize: 11)
         tf.textColor = .secondaryLabelColor
@@ -618,17 +566,6 @@ extension BookmarkList: NSOutlineViewDelegate {
             tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         cell.identifier = cellID
-        let fmt = DateFormatter()
-        fmt.dateStyle = .short
-        fmt.timeStyle = .short
-        tf.stringValue = fmt.string(from: node.dateAdded)
         return cell
     }
-}
-
-// MARK: - Helper Types
-
-private struct OpenRequest {
-    let node: BookmarkNode
-    let browser: Browser
 }

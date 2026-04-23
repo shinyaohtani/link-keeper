@@ -26,6 +26,17 @@ class BookmarkNode: Codable {
     /// アクセス回数
     var accessCount: Int { accessHistory.count }
 
+    /// タイトルが URL のままで修復が必要かどうか
+    var needsTitleRepair: Bool {
+        guard !isFolder, urlString != nil else { return false }
+        return title == urlString || title.hasPrefix("http://") || title.hasPrefix("https://")
+    }
+
+    /// URL のホスト名（ドメイン）
+    var host: String? {
+        urlString.flatMap { URL(string: $0)?.host }
+    }
+
     init(title: String, urlString: String? = nil, isFolder: Bool = false) {
         self.id = UUID()
         self.title = title

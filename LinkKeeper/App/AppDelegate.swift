@@ -95,8 +95,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "すべてを選択", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "情報を編集…",
-                                action: #selector(BookmarkList.editSelectedBookmark(_:)), keyEquivalent: "e"))
+        menu.addItem(NSMenuItem(title: "情報を見る",
+                                action: #selector(BookmarkList.editSelectedBookmark(_:)), keyEquivalent: "i"))
         menu.addItem(NSMenuItem(title: "名前を変更",
                                 action: #selector(BookmarkList.renameFromMenu(_:)), keyEquivalent: "\r"))
         menu.addItem(.separator())

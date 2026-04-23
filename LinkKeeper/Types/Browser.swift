@@ -158,3 +158,9 @@ struct CapturedPage {
         self.title = titlePart.isEmpty ? urlPart : titlePart
     }
 }
+
+/// struct Browser を NSMenuItem.representedObject に渡すためのラッパー。
+class BrowserWrapper: NSObject {
+    let browser: Browser
+    init(_ browser: Browser) { self.browser = browser; super.init() }
+}

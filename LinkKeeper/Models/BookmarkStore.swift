@@ -110,6 +110,14 @@ class BookmarkStore {
         insertNode(node, into: targetParent, at: targetIndex)
     }
 
+    /// 選択ノードに応じた挿入位置を返す
+    func insertionPoint(for selected: BookmarkNode?) -> (parent: BookmarkNode?, idx: Int) {
+        guard let sel = selected else { return (nil, rootNodes.count) }
+        if sel.isFolder { return (sel, sel.children?.count ?? 0) }
+        let parent = self.parent(of: sel)
+        return (parent, (index(of: sel, in: parent) ?? 0) + 1)
+    }
+
     /// 指定ノードが ancestor の子孫かどうかを判定
     func isDescendant(_ node: BookmarkNode, of ancestor: BookmarkNode) -> Bool {
         if ancestor.id == node.id { return true }
