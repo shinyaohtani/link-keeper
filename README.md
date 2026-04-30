@@ -9,13 +9,26 @@
 </p>
 
 <p align="center">
+  <a href="#install">インストール</a> ·
   <a href="#features">機能</a> ·
   <a href="#requirements">必要環境</a> ·
-  <a href="#build--install">ビルド</a> ·
+  <a href="#build--install-from-source">ビルド</a> ·
   <a href="#usage">使い方</a> ·
   <a href="concept.md">コンセプト</a> ·
   <a href="#license">ライセンス</a>
 </p>
+
+## Install
+
+### Homebrew (推奨)
+
+```bash
+brew install --cask shinyaohtani/tap/linkkeeper
+```
+
+### 手動インストール
+
+[Releases](https://github.com/shinyaohtani/link-keeper/releases) から最新の `LinkKeeper-x.x.zip` をダウンロードし、解凍して `/Applications` に配置してください。Apple 公証済みなので Gatekeeper 警告なしに起動できます。
 
 ---
 
@@ -56,7 +69,7 @@
 - Xcode 16 以降
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) （`brew install xcodegen`）
 
-## Build & Install
+## Build & Install from Source
 
 ```bash
 # プロジェクト生成 + Release ビルド + /Applications にインストール
