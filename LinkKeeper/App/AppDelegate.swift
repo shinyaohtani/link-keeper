@@ -26,7 +26,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Settings
 
-    @objc private func showSettings(_ sender: Any?) {
+    @objc func showSettings(_ sender: Any?) {
         if let w = settingsWindow { w.makeKeyAndOrderFront(nil); return }
         let vc = SettingsPanel()
         let w = NSWindow(contentViewController: vc)

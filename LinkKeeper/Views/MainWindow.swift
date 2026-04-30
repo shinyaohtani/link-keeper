@@ -54,6 +54,10 @@ class MainWindow: NSWindowController, NSWindowDelegate {
         store.save()
     }
 
+    @objc private func showSettingsFromMenu(_ sender: Any?) {
+        NSApp.sendAction(#selector(AppDelegate.showSettings(_:)), to: nil, from: nil)
+    }
+
     // MARK: - Private
 
     private func setupToolbar() {
@@ -129,13 +133,21 @@ extension MainWindow: NSToolbarDelegate {
     private func buildCaptureItem() -> NSToolbarItem {
         let item = NSMenuToolbarItem(itemIdentifier: captureID)
         item.label = "追加"
-        item.toolTip = "ブラウザからURLをキャプチャ（▼ でブラウザ選択）"
         item.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "Add")
         item.target = bookmarkList
         item.action = #selector(BookmarkList.captureFromDefault(_:))
         item.showsIndicator = true
         item.menu = buildCaptureMenu()
+        item.toolTip = captureTooltip
         return item
+    }
+
+    private var captureTooltip: String {
+        let defaultID = UserDefaults.standard.string(forKey: "LinkKeeper.defaultCaptureBrowser")
+        guard let id = defaultID, let browser = catalog.browser(for: id) else {
+            return "よく使うブラウザが未設定（▼ で設定）"
+        }
+        return "\(browser.name) から取得（▼ でブラウザ選択）"
     }
 
     private func buildFolderItem() -> NSToolbarItem {
@@ -162,12 +174,27 @@ extension MainWindow: NSToolbarDelegate {
 
     private func buildCaptureMenu() -> NSMenu {
         let menu = NSMenu()
-        let auto = NSMenuItem(title: "ブラウザから自動取得",
-                              action: #selector(BookmarkList.captureFromDefault(_:)), keyEquivalent: "")
-        auto.target = bookmarkList
-        menu.addItem(auto)
+
+        // よく使うブラウザから取得
+        let defaultID = UserDefaults.standard.string(forKey: "LinkKeeper.defaultCaptureBrowser")
+        let defaultBrowser = defaultID.flatMap { catalog.browser(for: $0) }
+        let fav = NSMenuItem(title: defaultBrowser != nil
+                                ? "よく使うブラウザ(\(defaultBrowser!.name))から取得"
+                                : "よく使うブラウザ(未設定)",
+                             action: #selector(BookmarkList.captureFromDefault(_:)), keyEquivalent: "")
+        fav.target = bookmarkList
+        fav.isEnabled = defaultBrowser != nil
+        menu.addItem(fav)
+
+        // よく使うブラウザを設定
+        let settings = NSMenuItem(title: "よく使うブラウザを設定…",
+                                  action: #selector(showSettingsFromMenu(_:)), keyEquivalent: "")
+        settings.target = self
+        menu.addItem(settings)
+
         menu.addItem(.separator())
 
+        // ブラウザ一覧
         for browser in catalog.installed {
             let item = NSMenuItem(title: "\(browser.name) から取得",
                                   action: #selector(BookmarkList.captureFromBrowser(_:)), keyEquivalent: "")
@@ -177,6 +204,8 @@ extension MainWindow: NSToolbarDelegate {
         }
 
         menu.addItem(.separator())
+
+        // クリップボードから
         let clip = NSMenuItem(title: "クリップボードのURLから作成",
                               action: #selector(BookmarkList.pasteURLAsBookmark(_:)), keyEquivalent: "")
         clip.target = bookmarkList

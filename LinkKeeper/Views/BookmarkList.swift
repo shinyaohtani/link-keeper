@@ -123,24 +123,26 @@ extension BookmarkList {
         let selected = selectedNode()
         let (parent, idx) = store.insertionPoint(for: selected)
         let folder = BookmarkNode(title: "新規フォルダ", isFolder: true)
+        folder.isExpanded = true
         performInsert(folder, into: parent, at: idx, actionName: "新規フォルダ")
         if let parent = parent { outlineView.expandItem(parent) }
+        outlineView.expandItem(folder)
         selectAndEdit(folder)
     }
 
     @objc func captureFromDefault(_ sender: Any?) {
-        let settings = SettingsPanel()
-        _ = settings.view
-        if let id = settings.defaultBundleID, let browser = catalog.browser(for: id) {
-            guard let page = browser.frontPage else {
-                showCaptureError(browser.name); return
-            }
-            insertCapturedPage(page); return
+        let defaultID = UserDefaults.standard.string(forKey: "LinkKeeper.defaultCaptureBrowser")
+        guard let id = defaultID, let browser = catalog.browser(for: id) else {
+            let alert = NSAlert()
+            alert.messageText = "よく使うブラウザが設定されていません"
+            alert.informativeText = "設定画面またはメニューの「よく使うブラウザを設定…」から設定してください。"
+            alert.runModal()
+            return
         }
-        guard let result = catalog.captureFromFrontmost() else {
-            showCaptureError(nil); return
+        guard let page = browser.frontPage else {
+            showCaptureError(browser.name); return
         }
-        insertCapturedPage(result.page)
+        insertCapturedPage(page)
     }
 
     @objc func captureFromBrowser(_ sender: NSMenuItem) {
@@ -262,28 +264,53 @@ extension BookmarkList {
 
 extension BookmarkList {
     func saveExpandedState() {
+        // node.isExpanded はデリゲートでリアルタイム更新済み。
+        // 見えていない下層の状態もモデルに保持されているのでそのまま保存。
         var ids: [String] = []
-        collectExpanded(store.rootNodes, into: &ids)
+        collectExpandedIDs(store.rootNodes, into: &ids)
         UserDefaults.standard.set(ids, forKey: expandedKey)
     }
 
     func restoreExpandedState() {
         guard let ids = UserDefaults.standard.stringArray(forKey: expandedKey) else { return }
-        expandNodes(store.rootNodes, matching: Set(ids))
+        let idSet = Set(ids)
+        applyExpandedState(store.rootNodes, matching: idSet)
     }
 
-    private func collectExpanded(_ nodes: [BookmarkNode], into ids: inout [String]) {
+    private func collectExpandedIDs(_ nodes: [BookmarkNode], into ids: inout [String]) {
         for node in nodes where node.isFolder {
-            node.isExpanded = outlineView.isItemExpanded(node)
             if node.isExpanded { ids.append(node.id.uuidString) }
-            if let children = node.children { collectExpanded(children, into: &ids) }
+            if let children = node.children { collectExpandedIDs(children, into: &ids) }
         }
     }
 
-    private func expandNodes(_ nodes: [BookmarkNode], matching ids: Set<String>) {
+    private func applyExpandedState(_ nodes: [BookmarkNode], matching ids: Set<String>) {
+        // node.isExpanded はデリゲートでリアルタイム更新されている真実の情報源。
+        // UserDefaults の ids は前回 saveExpandedState 時の古い状態のため、OR を取ると
+        // ユーザーが閉じたフォルダが再展開されるバグになる。node.isExpanded のみ参照する。
         for node in nodes where node.isFolder {
-            if ids.contains(node.id.uuidString) || node.isExpanded { outlineView.expandItem(node) }
-            if let children = node.children { expandNodes(children, matching: ids) }
+            if node.isExpanded { outlineView.expandItem(node) }
+            if let children = node.children { applyExpandedState(children, matching: ids) }
+        }
+    }
+
+    /// 全子孫を再帰的に展開
+    private func expandAllDescendants(of node: BookmarkNode) {
+        guard let children = node.children else { return }
+        for child in children where child.isFolder {
+            child.isExpanded = true
+            outlineView.expandItem(child)
+            expandAllDescendants(of: child)
+        }
+    }
+
+    /// 全子孫を再帰的に折りたたみ
+    private func collapseAllDescendants(of node: BookmarkNode) {
+        guard let children = node.children else { return }
+        for child in children where child.isFolder {
+            collapseAllDescendants(of: child)
+            child.isExpanded = false
+            outlineView.collapseItem(child)
         }
     }
 }
@@ -534,6 +561,25 @@ extension BookmarkList: NSOutlineViewDelegate {
     }
 
     func outlineView(_ ov: NSOutlineView, shouldSelectItem item: Any) -> Bool { true }
+
+    // 展開/折りたたみ状態をモデルにリアルタイム同期
+    func outlineViewItemDidExpand(_ notification: Notification) {
+        guard let node = notification.userInfo?["NSObject"] as? BookmarkNode else { return }
+        node.isExpanded = true
+        // Option+Click: 全子孫を展開
+        if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+            expandAllDescendants(of: node)
+        }
+    }
+
+    func outlineViewItemDidCollapse(_ notification: Notification) {
+        guard let node = notification.userInfo?["NSObject"] as? BookmarkNode else { return }
+        node.isExpanded = false
+        // Option+Click: 全子孫を折りたたみ
+        if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+            collapseAllDescendants(of: node)
+        }
+    }
 
     private func titleCell(for node: BookmarkNode) -> BookmarkCell {
         let cellID = NSUserInterfaceItemIdentifier("BookmarkCell")
