@@ -36,9 +36,8 @@ struct ContextMenu {
 
     private func appendColorTag(to menu: NSMenu, for node: BookmarkNode) {
         let item = NSMenuItem(title: "カラーラベル", action: nil, keyEquivalent: "")
-        item.submenu = ColorTagMenu(
-            currentTag: node.colorTag, target: target, action: #selector(BookmarkList.setColorTagAction(_:))
-        ).menu
+        item.submenu = ColorTagMenu(currentTag: node.colorTag)
+            .menu(target: target, action: #selector(BookmarkList.setColorTagAction(_:)))
         menu.addItem(item)
         menu.addItem(.separator())
     }
