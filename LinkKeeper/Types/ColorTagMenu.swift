@@ -3,10 +3,8 @@ import AppKit
 /// カラーラベルメニューを構築する値型。コンテキストメニュー・メインメニューで共用。
 struct ColorTagMenu {
     let currentTag: Int
-    let target: AnyObject?
-    let action: Selector
 
-    var menu: NSMenu {
+    func menu(target: AnyObject?, action: Selector) -> NSMenu {
         let menu = NSMenu()
         let defs: [(String, NSColor?)] = [
             ("なし",   nil),

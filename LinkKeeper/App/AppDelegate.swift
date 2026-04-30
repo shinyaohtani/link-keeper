@@ -101,8 +101,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                 action: #selector(BookmarkList.renameFromMenu(_:)), keyEquivalent: "\r"))
         menu.addItem(.separator())
         let colorItem = NSMenuItem(title: "カラーラベル", action: nil, keyEquivalent: "")
-        colorItem.submenu = ColorTagMenu(currentTag: -1, target: nil,
-                                          action: #selector(BookmarkList.setColorTagAction(_:))).menu
+        colorItem.submenu = ColorTagMenu(currentTag: -1)
+            .menu(target: nil, action: #selector(BookmarkList.setColorTagAction(_:)))
         menu.addItem(colorItem)
         let item = NSMenuItem()
         item.submenu = menu
