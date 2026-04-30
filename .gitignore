@@ -15,3 +15,7 @@ build/
 # Reference projects (not part of this project)
 refs-other-proj/
 refs-other-proj-macos/
+
+# claude
+claude/
+.claude/
