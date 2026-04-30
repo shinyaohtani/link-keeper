@@ -22,6 +22,17 @@
 
 ### Homebrew (推奨)
 
+タップを追加してインストール:
+
+```bash
+brew tap shinyaohtani/tap
+brew install --cask linkkeeper
+```
+
+#### 1コマンドで済ませる場合
+
+フル形式で指定すれば、タップ追加を別途行う必要はありません（内部的には初回インストール時に自動でタップが追加されます）:
+
 ```bash
 brew install --cask shinyaohtani/tap/linkkeeper
 ```
