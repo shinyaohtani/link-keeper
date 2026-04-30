@@ -21,6 +21,7 @@ Usage:
   ./gen_build_install.zsh --release [version]   Build, sign (Developer ID), notarize, staple, zip
                                                 Output: release/LinkKeeper-<version>.zip
                                                 version: optional, defaults to MARKETING_VERSION
+                                                Requires: HEAD == origin/main, clean working tree
 
 Environment:
   LINKKEEPER_NOTARY_PROFILE  notarytool keychain profile name (default: linkkeeper-notary)
@@ -98,6 +99,31 @@ case "$1" in
   --release)
     # Optional version argument
     VERSION="${2:-}"
+
+    # Verify HEAD is on origin/main (clean tree, no unpushed commits)
+    echo "==> Verifying HEAD == origin/main ..."
+    if [[ ! -d ".git" ]] && ! git rev-parse --git-dir > /dev/null 2>&1; then
+      echo "Error: not a git repository" >&2
+      exit 1
+    fi
+    git fetch origin main --quiet || { echo "Error: failed to fetch origin/main" >&2; exit 1; }
+
+    LOCAL_HEAD="$(git rev-parse HEAD)"
+    REMOTE_MAIN="$(git rev-parse origin/main)"
+
+    if [[ "$LOCAL_HEAD" != "$REMOTE_MAIN" ]]; then
+      echo "Error: HEAD ($LOCAL_HEAD) does not match origin/main ($REMOTE_MAIN)." >&2
+      echo "       Releases must be built from the published main branch." >&2
+      echo "       Commit, push, and merge to main before releasing." >&2
+      exit 1
+    fi
+
+    if [[ -n "$(git status --porcelain)" ]]; then
+      echo "Error: working tree has uncommitted changes:" >&2
+      git status --short >&2
+      exit 1
+    fi
+    echo "    HEAD: $LOCAL_HEAD (matches origin/main, clean)"
 
     echo "==> xcodegen generate"
     xcodegen generate
