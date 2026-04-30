@@ -11,6 +11,7 @@ xcuserdata/
 
 # Build
 build/
+release/
 
 # Reference projects (not part of this project)
 refs-other-proj/
