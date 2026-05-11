@@ -1,12 +1,16 @@
 import AppKit
 
-/// ブックマーク行のセル。アイコン + タイトル（編集可能）。
+/// ブックマーク行のセル。launch ボタン + アイコン + タイトル（編集可能）。
 class BookmarkCell: NSTableCellView {
+    let launchButton = NSButton()
     let iconView = NSImageView()
     let titleField = NSTextField()
+    private let hStack = NSStackView()
     private let iconSize: CGFloat = 18
+    private let launchSize: CGFloat = 16
 
     var onTitleEdited: ((String) -> Void)?
+    var onOpen: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -19,6 +23,7 @@ class BookmarkCell: NSTableCellView {
     func configure(with node: BookmarkNode) {
         titleField.stringValue = node.title
         iconView.contentTintColor = nil
+        launchButton.isHidden = node.isFolder
         if node.isFolder {
             iconView.image = SymbolIcon(name: "folder.fill", color: .systemBlue, size: iconSize).image
         } else if let data = node.faviconData, let img = NSImage(data: data) {
@@ -38,11 +43,55 @@ class BookmarkCell: NSTableCellView {
     // MARK: - Private
 
     private func setupViews() {
+        configureLaunchButton()
+        configureIconView()
+        configureTitleField()
+
+        hStack.translatesAutoresizingMaskIntoConstraints = false
+        hStack.orientation = .horizontal
+        hStack.spacing = 4
+        hStack.alignment = .centerY
+        hStack.addArrangedSubview(launchButton)
+        hStack.addArrangedSubview(iconView)
+        hStack.addArrangedSubview(titleField)
+        addSubview(hStack)
+
+        imageView = iconView
+        textField = titleField
+
+        NSLayoutConstraint.activate([
+            hStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            hStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+            hStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            launchButton.widthAnchor.constraint(equalToConstant: launchSize),
+            launchButton.heightAnchor.constraint(equalToConstant: launchSize),
+            iconView.widthAnchor.constraint(equalToConstant: iconSize),
+            iconView.heightAnchor.constraint(equalToConstant: iconSize),
+        ])
+    }
+
+    private func configureLaunchButton() {
+        let cfg = NSImage.SymbolConfiguration(pointSize: launchSize - 2, weight: .regular)
+        launchButton.translatesAutoresizingMaskIntoConstraints = false
+        launchButton.bezelStyle = .accessoryBarAction
+        launchButton.isBordered = false
+        launchButton.imagePosition = .imageOnly
+        launchButton.image = NSImage(systemSymbolName: "arrow.up.right.circle.fill",
+                                     accessibilityDescription: "Open")?
+            .withSymbolConfiguration(cfg)
+        launchButton.contentTintColor = .secondaryLabelColor
+        launchButton.toolTip = "ブラウザで開く"
+        launchButton.target = self
+        launchButton.action = #selector(launchTapped(_:))
+    }
+
+    private func configureIconView() {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyDown
         iconView.imageAlignment = .alignCenter
-        addSubview(iconView)
+    }
 
+    private func configureTitleField() {
         titleField.translatesAutoresizingMaskIntoConstraints = false
         titleField.isBordered = false
         titleField.drawsBackground = false
@@ -53,20 +102,6 @@ class BookmarkCell: NSTableCellView {
         titleField.cell?.truncatesLastVisibleLine = true
         titleField.font = NSFont.systemFont(ofSize: 13)
         titleField.delegate = self
-        addSubview(titleField)
-
-        imageView = iconView
-        textField = titleField
-
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: iconSize),
-            iconView.heightAnchor.constraint(equalToConstant: iconSize),
-            titleField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
-            titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-            titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
     }
 
     private func applyColorTag(_ tag: Int) {
@@ -82,6 +117,10 @@ class BookmarkCell: NSTableCellView {
     private func endEditing() {
         titleField.isEditable = false
         titleField.isSelectable = false
+    }
+
+    @objc private func launchTapped(_ sender: Any?) {
+        onOpen?()
     }
 }
 
