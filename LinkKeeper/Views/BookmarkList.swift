@@ -589,6 +589,12 @@ extension BookmarkList: NSOutlineViewDelegate {
         cell.onTitleEdited = { [weak self] title in
             node.title = title; node.recordEdit(); self?.store.save()
         }
+        cell.onOpen = { [weak self] in
+            guard let urlStr = node.urlString, let url = URL(string: urlStr) else { return }
+            node.recordAccess()
+            self?.store.save()
+            NSWorkspace.shared.open(url)
+        }
         return cell
     }
 
