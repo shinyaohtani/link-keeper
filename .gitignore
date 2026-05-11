@@ -23,3 +23,5 @@ claude/
 
 # 内部参考資料（リポジトリには含めない）
 refactoring-standard-swift.md
+
+tmp/
