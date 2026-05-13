@@ -111,11 +111,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildViewMenu() -> NSMenuItem {
         let menu = NSMenu(title: "表示")
-        menu.addItem(NSMenuItem(title: "フローティング切替",
-                                action: #selector(MainWindow.toggleFloating(_:)), keyEquivalent: "f"))
+        let toggle = NSMenuItem(title: "フローティング切替",
+                                action: #selector(toggleFloatingFromMenu(_:)),
+                                keyEquivalent: "f")
+        toggle.target = self
+        menu.addItem(toggle)
         let item = NSMenuItem()
         item.submenu = menu
         return item
+    }
+
+    /// メニューバーから呼ばれるフローティング切替。
+    /// 別 Space にウィンドウがあって key window でない状況でも、
+    /// AppDelegate を直接ターゲットにすることでメニューが有効になる。
+    @objc func toggleFloatingFromMenu(_ sender: Any?) {
+        mainWindow?.toggleFloating(sender)
     }
 
     private func buildCaptureSubmenu() -> NSMenuItem {
