@@ -45,6 +45,11 @@ class MainWindow: NSWindowController, NSWindowDelegate {
         applyFloating()
         updateFloatIcon()
         UserDefaults.standard.set(isFloating, forKey: floatingKey)
+        // ON にした場合は現在の Space に呼び寄せて前面化（既にいた場合も問題なし）
+        if isFloating {
+            window?.orderFrontRegardless()
+            window?.makeKey()
+        }
     }
 
     // MARK: - State
@@ -91,9 +96,10 @@ class MainWindow: NSWindowController, NSWindowDelegate {
 
     private func applyFloating() {
         window?.level = isFloating ? .floating : .normal
+        // ピンON: 全 Space に常駐 / ピンOFF: アクティブ化時に自分のいる Space に移動
         window?.collectionBehavior = isFloating
             ? [.canJoinAllSpaces, .fullScreenAuxiliary]
-            : [.fullScreenAuxiliary]
+            : [.moveToActiveSpace, .fullScreenAuxiliary]
     }
 
     private func updateFloatIcon() {
