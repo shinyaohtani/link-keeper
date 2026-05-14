@@ -8,7 +8,7 @@ settings:
   base:
     DEAD_CODE_STRIPPING: YES
     ENABLE_USER_SCRIPT_SANDBOXING: YES
-    ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: YES
+    ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
     ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOL_EXTENSIONS: NO
     SWIFT_EMIT_LOC_STRINGS: YES
     STRING_CATALOG_GENERATE_SYMBOLS: YES
@@ -24,6 +24,8 @@ targets:
     info:
       path: LinkKeeper/Info.plist
       properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         NSAppleEventsUsageDescription: "ブラウザからURLとページタイトルを取得するためにApple Eventsを使用します"
@@ -39,8 +41,8 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: LinkKeeper
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.utilities"
         INFOPLIST_KEY_NSHumanReadableCopyright: "(C) Shinya Ohtani"
-        MARKETING_VERSION: "1.0.3"
-        CURRENT_PROJECT_VERSION: 4
+        MARKETING_VERSION: "1.0.4"
+        CURRENT_PROJECT_VERSION: 5
         SWIFT_VERSION: "5.0"
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_PREVIEWS: YES
