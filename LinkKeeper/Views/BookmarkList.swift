@@ -4,6 +4,8 @@ import AppKit
 class BookmarkList: NSViewController {
     private(set) var outlineView: BookmarkOutline!
     private var scrollView: NSScrollView!
+    private var searchField: NSSearchField!
+    private var filter = NodeFilter(query: "")
     let store: BookmarkStore
     let catalog: BrowserCatalog
     private let expandedKey = "LinkKeeper.expandedNodeIDs"
@@ -25,13 +27,36 @@ class BookmarkList: NSViewController {
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
+        let container = NSView()
+
+        searchField = NSSearchField()
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.placeholderString = "タイトルで絞り込み"
+        searchField.delegate = self
+        searchField.sendsWholeSearchString = false
+        searchField.sendsSearchStringImmediately = true
+        container.addSubview(searchField)
+
         scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         outlineView = BookmarkOutline()
         configureOutlineView()
         scrollView.documentView = outlineView
-        self.view = scrollView
+        container.addSubview(scrollView)
+
+        NSLayoutConstraint.activate([
+            searchField.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
+            searchField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            searchField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 6),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+
+        self.view = container
         restoreExpandedState()
         repairUrlTitles()
     }
@@ -441,11 +466,17 @@ extension BookmarkList {
 
 extension BookmarkList: NSOutlineViewDataSource {
     func outlineView(_ ov: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        (item as? BookmarkNode)?.children?.count ?? store.rootNodes.count
+        visibleChildren(of: item as? BookmarkNode).count
     }
 
     func outlineView(_ ov: NSOutlineView, child idx: Int, ofItem item: Any?) -> Any {
-        (item as? BookmarkNode)?.children?[idx] ?? store.rootNodes[idx]
+        visibleChildren(of: item as? BookmarkNode)[idx]
+    }
+
+    /// フィルタを適用した子ノード配列
+    private func visibleChildren(of parent: BookmarkNode?) -> [BookmarkNode] {
+        let all = parent?.children ?? store.rootNodes
+        return filter.filter(all)
     }
 
     func outlineView(_ ov: NSOutlineView, isItemExpandable item: Any) -> Bool {
@@ -563,10 +594,10 @@ extension BookmarkList: NSOutlineViewDelegate {
     func outlineView(_ ov: NSOutlineView, shouldSelectItem item: Any) -> Bool { true }
 
     // 展開/折りたたみ状態をモデルにリアルタイム同期
+    // フィルタ中は永続化しない（フィルタ解除後にユーザーの元の展開状態を復元するため）
     func outlineViewItemDidExpand(_ notification: Notification) {
         guard let node = notification.userInfo?["NSObject"] as? BookmarkNode else { return }
-        node.isExpanded = true
-        // Option+Click: 全子孫を展開
+        if !filter.isActive { node.isExpanded = true }
         if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
             expandAllDescendants(of: node)
         }
@@ -574,8 +605,7 @@ extension BookmarkList: NSOutlineViewDelegate {
 
     func outlineViewItemDidCollapse(_ notification: Notification) {
         guard let node = notification.userInfo?["NSObject"] as? BookmarkNode else { return }
-        node.isExpanded = false
-        // Option+Click: 全子孫を折りたたみ
+        if !filter.isActive { node.isExpanded = false }
         if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
             collapseAllDescendants(of: node)
         }
@@ -619,5 +649,43 @@ extension BookmarkList: NSOutlineViewDelegate {
         ])
         cell.identifier = cellID
         return cell
+    }
+}
+
+// MARK: - NSSearchField Delegate
+
+extension BookmarkList: NSSearchFieldDelegate {
+    func controlTextDidChange(_ obj: Notification) {
+        guard (obj.object as? NSSearchField) === searchField else { return }
+        applyFilter(query: searchField.stringValue)
+    }
+
+    /// クリアボタン (×) が押された / 検索終了時にも呼ばれる
+    func searchFieldDidEndSearching(_ sender: NSSearchField) {
+        applyFilter(query: "")
+    }
+
+    private func applyFilter(query: String) {
+        filter = NodeFilter(query: query)
+        outlineView.reloadData()
+        if filter.isActive {
+            // フィルタ中: マッチを含むフォルダをすべて展開
+            expandFilterMatches()
+        } else {
+            // フィルタ解除: ユーザーの元の展開状態を復元
+            restoreExpandedState()
+        }
+    }
+
+    private func expandFilterMatches() {
+        let folderIDs = filter.foldersContainingMatch(in: store.rootNodes)
+        expandFoldersByID(in: store.rootNodes, matching: folderIDs)
+    }
+
+    private func expandFoldersByID(in nodes: [BookmarkNode], matching ids: Set<UUID>) {
+        for node in nodes where node.isFolder {
+            if ids.contains(node.id) { outlineView.expandItem(node) }
+            if let children = node.children { expandFoldersByID(in: children, matching: ids) }
+        }
     }
 }
