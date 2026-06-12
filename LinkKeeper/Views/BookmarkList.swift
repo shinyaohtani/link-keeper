@@ -666,14 +666,49 @@ extension BookmarkList: NSSearchFieldDelegate {
     }
 
     private func applyFilter(query: String) {
+        // 選択中ノードを ID で保存（再ロード後も追跡可能にする）
+        let selectedIDs = outlineView.selectedRowIndexes
+            .compactMap { outlineView.item(atRow: $0) as? BookmarkNode }
+            .map(\.id)
+
         filter = NodeFilter(query: query)
         outlineView.reloadData()
         if filter.isActive {
-            // フィルタ中: マッチを含むフォルダをすべて展開
             expandFilterMatches()
         } else {
-            // フィルタ解除: ユーザーの元の展開状態を復元
             restoreExpandedState()
+        }
+
+        restoreSelection(selectedIDs)
+    }
+
+    /// ノード ID 集合を元に選択を復元。見えていない場合は祖先を展開して可視化。
+    private func restoreSelection(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        var rows = IndexSet()
+        for id in ids {
+            guard let node = store.findNode(by: id) else { continue }
+            // フィルタ中の場合、フィルタ条件に合わなければ復元しない
+            if filter.isActive && !filter.matches(node) { continue }
+            ensureVisible(node)
+            let row = outlineView.row(forItem: node)
+            if row >= 0 { rows.insert(row) }
+        }
+        if !rows.isEmpty {
+            outlineView.selectRowIndexes(rows, byExtendingSelection: false)
+        }
+    }
+
+    /// 与えられたノードが outlineView 上で可視になるよう祖先フォルダをすべて展開
+    private func ensureVisible(_ node: BookmarkNode) {
+        var ancestors: [BookmarkNode] = []
+        var current: BookmarkNode? = store.parent(of: node)
+        while let p = current {
+            ancestors.append(p)
+            current = store.parent(of: p)
+        }
+        for ancestor in ancestors.reversed() {
+            outlineView.expandItem(ancestor)
         }
     }
 
