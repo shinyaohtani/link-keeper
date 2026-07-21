@@ -1,0 +1,2 @@
+BUNDLE_ID=""
+NOTARY_PROFILE="${LINKKEEPER_NOTARY:-linkkeeper-notary}"
