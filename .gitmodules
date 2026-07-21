@@ -1,0 +1,3 @@
+[submodule "ai-build-support"]
+	path = ai-build-support
+	url = git@github.com:shinyaohtani/ai-build-support.git
