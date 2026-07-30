@@ -69,6 +69,21 @@ class BookmarkOutline: NSOutlineView {
         return (delegate as? BookmarkList)?.contextMenu(for: row)
     }
 
+    // MARK: - Copy
+
+    /// アウトラインが first responder のときに ⌘C / メニューのコピーを受け取り、
+    /// 選択行を Markdown テーブルとしてコピーする。（タイトル編集中はフィールドエディタが処理する）
+    @objc func copy(_ sender: Any?) {
+        (delegate as? BookmarkList)?.copy(sender)
+    }
+
+    @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(NSText.copy(_:)) {
+            return !selectedRowIndexes.isEmpty
+        }
+        return true
+    }
+
     // MARK: - Keyboard
 
     override func keyDown(with event: NSEvent) {

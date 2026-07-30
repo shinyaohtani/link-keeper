@@ -253,6 +253,108 @@ extension BookmarkList {
     }
 }
 
+// MARK: - Copy / Import / Export
+
+extension BookmarkList {
+    private static let tableDateFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f
+    }()
+
+    /// 選択行を Markdown テーブルとしてクリップボードにコピーする（⌘C）。
+    /// フィールドエディタ編集中はアウトラインが first responder にならないため、ここには来ない。
+    @objc func copy(_ sender: Any?) {
+        let nodes = selectedNodes()
+        guard !nodes.isEmpty else { NSSound.beep(); return }
+
+        let header = ["フォルダ階層", "名称", "URL", "Date Added"]
+        let rows: [[String]] = nodes.map { node in
+            [folderPath(of: node),
+             node.title,
+             node.urlString ?? "",
+             Self.tableDateFormat.string(from: node.dateAdded)]
+        }
+        let markdown = BookmarkPorter.markdownTable(header: header, rows: rows)
+
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(markdown, forType: .string)
+    }
+
+    /// 対象ノードの親フォルダ階層を "親/子" 形式で返す（ルート直下は空文字）。
+    private func folderPath(of node: BookmarkNode) -> String {
+        var parts: [String] = []
+        var current = store.parent(of: node)
+        while let folder = current {
+            parts.append(folder.title)
+            current = store.parent(of: folder)
+        }
+        return parts.reversed().joined(separator: "/")
+    }
+
+    /// 全ブックマークを Netscape Bookmark 形式（ブラウザ互換の HTML）でエクスポートする。
+    @objc func exportBookmarks(_ sender: Any?) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.html]
+        panel.nameFieldStringValue = "bookmarks.html"
+        panel.title = "ブックマークをエクスポート"
+        panel.beginSheetModal(for: view.window!) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self = self else { return }
+            let html = BookmarkPorter.exportHTML(self.store.rootNodes)
+            do {
+                try html.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                self.presentError("エクスポートに失敗しました", error.localizedDescription)
+            }
+        }
+    }
+
+    /// Netscape Bookmark 形式（ブラウザがエクスポートした HTML）をインポートする。
+    @objc func importBookmarks(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.html]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.title = "ブックマークをインポート"
+        panel.beginSheetModal(for: view.window!) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self = self else { return }
+            guard let html = try? String(contentsOf: url, encoding: .utf8) else {
+                self.presentError("インポートに失敗しました", "ファイルを読み込めませんでした。")
+                return
+            }
+            let nodes = BookmarkPorter.importHTML(html)
+            guard !nodes.isEmpty else {
+                self.presentError("インポートできる項目がありません", "対応形式（Netscape Bookmark HTML）か確認してください。")
+                return
+            }
+            self.insertImported(nodes)
+        }
+    }
+
+    private func insertImported(_ nodes: [BookmarkNode]) {
+        let (parent, startIdx) = store.insertionPoint(for: selectedNode())
+        undoManager?.beginUndoGrouping()
+        var idx = startIdx
+        for node in nodes {
+            performInsert(node, into: parent, at: idx, actionName: "インポート")
+            idx += 1
+        }
+        undoManager?.endUndoGrouping()
+        undoManager?.setActionName("インポート")
+        if let parent = parent { outlineView.expandItem(parent) }
+    }
+
+    private func presentError(_ message: String, _ info: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = message
+        alert.informativeText = info
+        alert.runModal()
+    }
+}
+
 // MARK: - Sheets
 
 extension BookmarkList {
@@ -289,11 +391,26 @@ extension BookmarkList {
 
 extension BookmarkList {
     func saveExpandedState() {
-        // node.isExpanded はデリゲートでリアルタイム更新済み。
-        // 見えていない下層の状態もモデルに保持されているのでそのまま保存。
+        // node.isExpanded は基本デリゲートでリアルタイム更新されるが、検索経由で開いた
+        // フォルダは expandItem が no-op になりモデルに反映されないことがある。
+        // そこで保存時に「実際のアウトラインの開閉状態」をモデルへ同期する（フィルタ中は除く）。
+        if !filter.isActive {
+            syncExpandedFromView(store.rootNodes)
+        }
         var ids: [String] = []
         collectExpandedIDs(store.rootNodes, into: &ids)
         UserDefaults.standard.set(ids, forKey: expandedKey)
+    }
+
+    /// 現在表示中（可視な行）のフォルダについて、実際の開閉状態を node.isExpanded に反映する。
+    /// 折りたたまれた親の下に隠れているフォルダは、以前の状態をそのまま保持する。
+    private func syncExpandedFromView(_ nodes: [BookmarkNode]) {
+        for node in nodes where node.isFolder {
+            if outlineView.row(forItem: node) >= 0 {
+                node.isExpanded = outlineView.isItemExpanded(node)
+            }
+            if let children = node.children { syncExpandedFromView(children) }
+        }
     }
 
     func restoreExpandedState() {

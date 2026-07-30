@@ -15,6 +15,7 @@ struct ContextMenu {
         appendBrowserItems(to: menu, for: node)
         appendColorTag(to: menu, for: node)
         appendEditItems(to: menu)
+        appendCopy(to: menu)
         menu.addItem(.separator())
         appendNewFolder(to: menu)
         return menu
@@ -57,6 +58,13 @@ struct ContextMenu {
                                 action: #selector(BookmarkList.deleteSelectedItems(_:)), keyEquivalent: "")
         delete.target = target
         menu.addItem(delete)
+    }
+
+    private func appendCopy(to menu: NSMenu) {
+        let copy = NSMenuItem(title: "表としてコピー",
+                              action: #selector(BookmarkList.copy(_:)), keyEquivalent: "")
+        copy.target = target
+        menu.addItem(copy)
     }
 
     private func appendNewFolder(to menu: NSMenu) {
