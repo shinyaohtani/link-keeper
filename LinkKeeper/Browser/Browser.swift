@@ -113,52 +113,6 @@ extension Browser {
     }
 }
 
-// MARK: - ScriptResult (AppleScript 実行)
-
-struct ScriptResult {
-    let source: String
-
-    var value: String? {
-        let script = NSAppleScript(source: source)
-        var error: NSDictionary?
-        let result = script?.executeAndReturnError(&error)
-        if let error = error {
-            NSLog("AppleScript error: \(error)")
-            return nil
-        }
-        return result?.stringValue
-    }
-}
-
-// MARK: - CapturedPage
-
-struct CapturedPage {
-    let url: String
-    let title: String
-
-    init(url: String, title: String) {
-        self.url = url
-        self.title = title
-    }
-
-    init?(parsing raw: String) {
-        let parts = raw.components(separatedBy: "\n")
-        guard parts.count >= 2 else { return nil }
-
-        var urlPart = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
-        let titlePart = parts.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !urlPart.isEmpty else { return nil }
-
-        if !urlPart.hasPrefix("http://") && !urlPart.hasPrefix("https://") {
-            urlPart = "https://\(urlPart)"
-        }
-
-        self.url = urlPart
-        self.title = titlePart.isEmpty ? urlPart : titlePart
-    }
-}
-
 /// struct Browser を NSMenuItem.representedObject に渡すためのラッパー。
 class BrowserWrapper: NSObject {
     let browser: Browser

@@ -33,6 +33,11 @@ class BookmarkOutline: NSOutlineView {
         super.mouseDown(with: event)
 
         guard wasSelected, row >= 0, event.clickCount == 1, column(at: point) == 0 else { return }
+        scheduleSlowEdit(row: row)
+    }
+
+    /// スローダブルクリック相当の遅延編集を予約する。
+    private func scheduleSlowEdit(row: Int) {
         lastClickedRow = row
         editTimer = Timer.scheduledTimer(withTimeInterval: NSEvent.doubleClickInterval + 0.05,
                                          repeats: false) { [weak self] _ in

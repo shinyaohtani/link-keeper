@@ -1,6 +1,8 @@
 import AppKit
 
 /// ブックマークリストのメインビューコントローラ。
+/// ツリー変更は BookmarkTree、展開状態は OutlineExpansion、外部フォーマット変換は
+/// NetscapeBookmark / MarkdownTable に委譲し、本体は UI 組立とアクションの受け口に徹する。
 class BookmarkList: NSViewController {
     private(set) var outlineView: BookmarkOutline!
     private var scrollView: NSScrollView!
@@ -8,7 +10,8 @@ class BookmarkList: NSViewController {
     private var filter = NodeFilter(query: "")
     let store: BookmarkStore
     let catalog: BrowserCatalog
-    private let expandedKey = "LinkKeeper.expandedNodeIDs"
+    private var tree: BookmarkTree!
+    private var expansion: OutlineExpansion!
     private let bookmarkUTI = NSPasteboard.PasteboardType("com.linkkeeper.bookmark-id")
     private let dateFormat: DateFormatter = {
         let f = DateFormatter()
@@ -21,6 +24,9 @@ class BookmarkList: NSViewController {
         self.store = store
         self.catalog = catalog
         super.init(nibName: nil, bundle: nil)
+        tree = BookmarkTree(store: store)
+        tree.reload = { [weak self] in self?.reloadUI() }
+        tree.undoManagerProvider = { [weak self] in self?.undoManager }
     }
 
     @available(*, unavailable)
@@ -28,24 +34,38 @@ class BookmarkList: NSViewController {
 
     override func loadView() {
         let container = NSView()
-
-        searchField = NSSearchField()
-        searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.placeholderString = "タイトルで絞り込み"
-        searchField.delegate = self
-        searchField.sendsWholeSearchString = false
-        searchField.sendsSearchStringImmediately = true
+        searchField = makeSearchField()
         container.addSubview(searchField)
+        scrollView = makeScrollView()
+        container.addSubview(scrollView)
+        activateLayout(in: container)
+        self.view = container
+        setupExpansion()
+        repairUrlTitles()
+    }
 
-        scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
+    private func makeSearchField() -> NSSearchField {
+        let field = NSSearchField()
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.placeholderString = "タイトルで絞り込み"
+        field.delegate = self
+        field.sendsWholeSearchString = false
+        field.sendsSearchStringImmediately = true
+        return field
+    }
+
+    private func makeScrollView() -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
         outlineView = BookmarkOutline()
         configureOutlineView()
-        scrollView.documentView = outlineView
-        container.addSubview(scrollView)
+        scroll.documentView = outlineView
+        return scroll
+    }
 
+    private func activateLayout(in container: NSView) {
         NSLayoutConstraint.activate([
             searchField.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
             searchField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
@@ -55,48 +75,28 @@ class BookmarkList: NSViewController {
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
-
-        self.view = container
-        restoreExpandedState()
-        repairUrlTitles()
     }
 
-    // MARK: - Undo + Insert with Lookup（統合）
-
-    func performInsert(_ node: BookmarkNode, into parent: BookmarkNode?, at idx: Int, actionName: String, lookup: Bool = false) {
-        undoManager?.registerUndo(withTarget: self) { $0.performRemove(node, actionName: actionName) }
-        undoManager?.setActionName(actionName)
-        store.insertNode(node, into: parent, at: idx)
-        reloadUI()
-        if lookup { lookupAndUpdate(node) }
+    private func setupExpansion() {
+        expansion = OutlineExpansion(outlineView: outlineView, store: store)
+        expansion.isFiltering = { [weak self] in self?.filter.isActive ?? false }
+        expansion.restore()
     }
 
-    func performRemove(_ node: BookmarkNode, actionName: String) {
-        let parent = store.parent(of: node)
-        let idx = store.index(of: node, in: parent) ?? 0
-        undoManager?.registerUndo(withTarget: self) { $0.performInsert(node, into: parent, at: idx, actionName: actionName) }
-        undoManager?.setActionName(actionName)
-        store.removeNode(node)
-        reloadUI()
-    }
-
-    func performMove(_ node: BookmarkNode, toParent: BookmarkNode?, toIdx: Int, actionName: String) {
-        let oldParent = store.parent(of: node)
-        let oldIdx = store.index(of: node, in: oldParent) ?? 0
-        undoManager?.registerUndo(withTarget: self) { $0.performMove(node, toParent: oldParent, toIdx: oldIdx, actionName: actionName) }
-        undoManager?.setActionName(actionName)
-        store.removeNode(node)
-        store.insertNode(node, into: toParent, at: min(toIdx, store.children(of: toParent).count))
-        reloadUI()
-    }
+    // MARK: - Reload
 
     func reloadUI() {
         outlineView.reloadData()
-        restoreExpandedState()
+        expansion.restore()
         store.save()
     }
 
-    // MARK: - Page Info Lookup（1箇所に統合）
+    /// 展開状態を永続化する（ウィンドウを閉じる/終了時に呼ばれる）。
+    func saveExpandedState() {
+        expansion.save()
+    }
+
+    // MARK: - Page Info Lookup（favicon / タイトル補完）
 
     /// favicon を再取得し、Undo 登録する。完了時に completion を呼ぶ。
     func reloadFavicon(for node: BookmarkNode, completion: @escaping () -> Void) {
@@ -149,7 +149,7 @@ extension BookmarkList {
         let (parent, idx) = store.insertionPoint(for: selected)
         let folder = BookmarkNode(title: "新規フォルダ", isFolder: true)
         folder.isExpanded = true
-        performInsert(folder, into: parent, at: idx, actionName: "新規フォルダ")
+        tree.insert(folder, into: parent, at: idx, actionName: "新規フォルダ")
         if let parent = parent { outlineView.expandItem(parent) }
         outlineView.expandItem(folder)
         selectAndEdit(folder)
@@ -264,34 +264,21 @@ extension BookmarkList {
     }()
 
     /// 選択行を Markdown テーブルとしてクリップボードにコピーする（⌘C）。
-    /// フィールドエディタ編集中はアウトラインが first responder にならないため、ここには来ない。
     @objc func copy(_ sender: Any?) {
         let nodes = selectedNodes()
         guard !nodes.isEmpty else { NSSound.beep(); return }
 
-        let header = ["フォルダ階層", "名称", "URL", "Date Added"]
         let rows: [[String]] = nodes.map { node in
             [folderPath(of: node),
              node.title,
              node.urlString ?? "",
              Self.tableDateFormat.string(from: node.dateAdded)]
         }
-        let markdown = BookmarkPorter.markdownTable(header: header, rows: rows)
+        let table = MarkdownTable(header: ["フォルダ階層", "名称", "URL", "Date Added"], rows: rows)
 
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString(markdown, forType: .string)
-    }
-
-    /// 対象ノードの親フォルダ階層を "親/子" 形式で返す（ルート直下は空文字）。
-    private func folderPath(of node: BookmarkNode) -> String {
-        var parts: [String] = []
-        var current = store.parent(of: node)
-        while let folder = current {
-            parts.append(folder.title)
-            current = store.parent(of: folder)
-        }
-        return parts.reversed().joined(separator: "/")
+        pb.setString(table.text, forType: .string)
     }
 
     /// 全ブックマークを Netscape Bookmark 形式（ブラウザ互換の HTML）でエクスポートする。
@@ -302,9 +289,9 @@ extension BookmarkList {
         panel.title = "ブックマークをエクスポート"
         panel.beginSheetModal(for: view.window!) { [weak self] response in
             guard response == .OK, let url = panel.url, let self = self else { return }
-            let html = BookmarkPorter.exportHTML(self.store.rootNodes)
+            let document = NetscapeBookmark(nodes: self.store.rootNodes)
             do {
-                try html.write(to: url, atomically: true, encoding: .utf8)
+                try document.html.write(to: url, atomically: true, encoding: .utf8)
             } catch {
                 self.presentError("エクスポートに失敗しました", error.localizedDescription)
             }
@@ -324,7 +311,7 @@ extension BookmarkList {
                 self.presentError("インポートに失敗しました", "ファイルを読み込めませんでした。")
                 return
             }
-            let nodes = BookmarkPorter.importHTML(html)
+            let nodes = NetscapeBookmark(html: html).nodes
             guard !nodes.isEmpty else {
                 self.presentError("インポートできる項目がありません", "対応形式（Netscape Bookmark HTML）か確認してください。")
                 return
@@ -333,16 +320,26 @@ extension BookmarkList {
         }
     }
 
+    /// 対象ノードの親フォルダ階層を "親/子" 形式で返す（ルート直下は空文字）。
+    private func folderPath(of node: BookmarkNode) -> String {
+        var parts: [String] = []
+        var current = store.parent(of: node)
+        while let folder = current {
+            parts.append(folder.title)
+            current = store.parent(of: folder)
+        }
+        return parts.reversed().joined(separator: "/")
+    }
+
     private func insertImported(_ nodes: [BookmarkNode]) {
         let (parent, startIdx) = store.insertionPoint(for: selectedNode())
-        undoManager?.beginUndoGrouping()
         var idx = startIdx
-        for node in nodes {
-            performInsert(node, into: parent, at: idx, actionName: "インポート")
-            idx += 1
+        tree.group("インポート") {
+            for node in nodes {
+                tree.insert(node, into: parent, at: idx, actionName: "インポート")
+                idx += 1
+            }
         }
-        undoManager?.endUndoGrouping()
-        undoManager?.setActionName("インポート")
         if let parent = parent { outlineView.expandItem(parent) }
     }
 
@@ -373,7 +370,8 @@ extension BookmarkList {
             guard let self = self else { return }
             let selected = self.selectedNode()
             let (parent, idx) = self.store.insertionPoint(for: selected)
-            self.performInsert(node, into: parent, at: idx, actionName: "ブックマーク追加", lookup: true)
+            self.tree.insert(node, into: parent, at: idx, actionName: "ブックマーク追加")
+            self.lookupAndUpdate(node)
             self.selectRow(for: node)
         }
         presentSheet(vc, title: "ブックマークを作成")
@@ -384,76 +382,6 @@ extension BookmarkList {
         w.title = title
         w.styleMask = [.titled, .closable]
         view.window?.beginSheet(w)
-    }
-}
-
-// MARK: - Expanded State
-
-extension BookmarkList {
-    func saveExpandedState() {
-        // node.isExpanded は基本デリゲートでリアルタイム更新されるが、検索経由で開いた
-        // フォルダは expandItem が no-op になりモデルに反映されないことがある。
-        // そこで保存時に「実際のアウトラインの開閉状態」をモデルへ同期する（フィルタ中は除く）。
-        if !filter.isActive {
-            syncExpandedFromView(store.rootNodes)
-        }
-        var ids: [String] = []
-        collectExpandedIDs(store.rootNodes, into: &ids)
-        UserDefaults.standard.set(ids, forKey: expandedKey)
-    }
-
-    /// 現在表示中（可視な行）のフォルダについて、実際の開閉状態を node.isExpanded に反映する。
-    /// 折りたたまれた親の下に隠れているフォルダは、以前の状態をそのまま保持する。
-    private func syncExpandedFromView(_ nodes: [BookmarkNode]) {
-        for node in nodes where node.isFolder {
-            if outlineView.row(forItem: node) >= 0 {
-                node.isExpanded = outlineView.isItemExpanded(node)
-            }
-            if let children = node.children { syncExpandedFromView(children) }
-        }
-    }
-
-    func restoreExpandedState() {
-        guard let ids = UserDefaults.standard.stringArray(forKey: expandedKey) else { return }
-        let idSet = Set(ids)
-        applyExpandedState(store.rootNodes, matching: idSet)
-    }
-
-    private func collectExpandedIDs(_ nodes: [BookmarkNode], into ids: inout [String]) {
-        for node in nodes where node.isFolder {
-            if node.isExpanded { ids.append(node.id.uuidString) }
-            if let children = node.children { collectExpandedIDs(children, into: &ids) }
-        }
-    }
-
-    private func applyExpandedState(_ nodes: [BookmarkNode], matching ids: Set<String>) {
-        // node.isExpanded はデリゲートでリアルタイム更新されている真実の情報源。
-        // UserDefaults の ids は前回 saveExpandedState 時の古い状態のため、OR を取ると
-        // ユーザーが閉じたフォルダが再展開されるバグになる。node.isExpanded のみ参照する。
-        for node in nodes where node.isFolder {
-            if node.isExpanded { outlineView.expandItem(node) }
-            if let children = node.children { applyExpandedState(children, matching: ids) }
-        }
-    }
-
-    /// 全子孫を再帰的に展開
-    private func expandAllDescendants(of node: BookmarkNode) {
-        guard let children = node.children else { return }
-        for child in children where child.isFolder {
-            child.isExpanded = true
-            outlineView.expandItem(child)
-            expandAllDescendants(of: child)
-        }
-    }
-
-    /// 全子孫を再帰的に折りたたみ
-    private func collapseAllDescendants(of node: BookmarkNode) {
-        guard let children = node.children else { return }
-        for child in children where child.isFolder {
-            collapseAllDescendants(of: child)
-            child.isExpanded = false
-            outlineView.collapseItem(child)
-        }
     }
 }
 
@@ -471,17 +399,17 @@ extension BookmarkList {
     }
 
     private func deleteItems(_ nodes: [BookmarkNode]) {
-        undoManager?.beginUndoGrouping()
-        for node in nodes { performRemove(node, actionName: "削除") }
-        undoManager?.endUndoGrouping()
-        undoManager?.setActionName("削除")
+        tree.group("削除") {
+            for node in nodes { tree.remove(node, actionName: "削除") }
+        }
     }
 
     private func insertCapturedPage(_ page: CapturedPage) {
         let selected = selectedNode()
         let (parent, idx) = store.insertionPoint(for: selected)
         let node = BookmarkNode(title: page.title, urlString: page.url)
-        performInsert(node, into: parent, at: idx, actionName: "ブックマーク追加", lookup: true)
+        tree.insert(node, into: parent, at: idx, actionName: "ブックマーク追加")
+        lookupAndUpdate(node)
         selectRow(for: node)
     }
 
@@ -532,7 +460,15 @@ extension BookmarkList {
         outlineView.indentationPerLevel = 16
         outlineView.rowHeight = 24
         outlineView.intercellSpacing = NSSize(width: 0, height: 1)
+        addColumns()
+        outlineView.dataSource = self
+        outlineView.delegate = self
+        outlineView.target = self
+        outlineView.doubleAction = #selector(doubleClicked(_:))
+        registerDragTypes()
+    }
 
+    private func addColumns() {
         let titleCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("TitleColumn"))
         titleCol.title = "Name"
         titleCol.minWidth = 120
@@ -551,12 +487,9 @@ extension BookmarkList {
         // autosave はカラム追加後に設定（保存済み幅の復元のため）
         outlineView.autosaveName = "LinkKeeperOutline"
         outlineView.autosaveTableColumns = true
+    }
 
-        outlineView.dataSource = self
-        outlineView.delegate = self
-        outlineView.target = self
-        outlineView.doubleAction = #selector(doubleClicked(_:))
-
+    private func registerDragTypes() {
         outlineView.registerForDraggedTypes([
             bookmarkUTI, .URL, .string,
             .init("public.url"), .init("public.url-name"), .init("WebURLsWithTitlesPboardType"),
@@ -654,21 +587,7 @@ extension BookmarkList: NSOutlineViewDataSource {
         let nodes = items.compactMap { $0.string(forType: bookmarkUTI).flatMap(UUID.init) }
             .compactMap { store.findNode(by: $0) }
         guard !nodes.isEmpty else { return false }
-
-        undoManager?.beginUndoGrouping()
-        var insertIdx = targetIdx
-        for node in nodes {
-            let oldParent = store.parent(of: node)
-            let oldIdx = store.index(of: node, in: oldParent) ?? 0
-            store.removeNode(node)
-            let clamped = min(insertIdx, store.children(of: parent).count)
-            store.insertNode(node, into: parent, at: clamped)
-            undoManager?.registerUndo(withTarget: self) { $0.performMove(node, toParent: oldParent, toIdx: oldIdx, actionName: "移動") }
-            insertIdx = clamped + 1
-        }
-        undoManager?.endUndoGrouping()
-        undoManager?.setActionName("移動")
-        reloadUI()
+        tree.moveBatch(nodes, into: parent, at: targetIdx, actionName: "移動")
         return true
     }
 
@@ -684,16 +603,16 @@ extension BookmarkList: NSOutlineViewDataSource {
         guard !urls.isEmpty else { return false }
 
         let pbTitle = pb.string(forType: .init("public.url-name"))
-        undoManager?.beginUndoGrouping()
         var insertIdx = targetIdx
-        for info in urls {
-            let domain = URL(string: info.url)?.host ?? info.url
-            let node = BookmarkNode(title: info.title ?? pbTitle ?? domain, urlString: info.url)
-            performInsert(node, into: parent, at: insertIdx, actionName: "ドロップ", lookup: true)
-            insertIdx += 1
+        tree.group("ドロップ") {
+            for info in urls {
+                let domain = URL(string: info.url)?.host ?? info.url
+                let node = BookmarkNode(title: info.title ?? pbTitle ?? domain, urlString: info.url)
+                tree.insert(node, into: parent, at: insertIdx, actionName: "ドロップ")
+                lookupAndUpdate(node)
+                insertIdx += 1
+            }
         }
-        undoManager?.endUndoGrouping()
-        undoManager?.setActionName("ドロップ")
         return true
     }
 }
@@ -716,7 +635,7 @@ extension BookmarkList: NSOutlineViewDelegate {
         guard let node = notification.userInfo?["NSObject"] as? BookmarkNode else { return }
         if !filter.isActive { node.isExpanded = true }
         if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
-            expandAllDescendants(of: node)
+            expansion.expandAll(of: node)
         }
     }
 
@@ -724,7 +643,7 @@ extension BookmarkList: NSOutlineViewDelegate {
         guard let node = notification.userInfo?["NSObject"] as? BookmarkNode else { return }
         if !filter.isActive { node.isExpanded = false }
         if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
-            collapseAllDescendants(of: node)
+            expansion.collapseAll(of: node)
         }
     }
 
@@ -793,7 +712,7 @@ extension BookmarkList: NSSearchFieldDelegate {
         if filter.isActive {
             expandFilterMatches()
         } else {
-            restoreExpandedState()
+            expansion.restore()
         }
 
         restoreSelection(selectedIDs)
