@@ -75,6 +75,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "新規フォルダ",
                                 action: #selector(BookmarkList.newFolder(_:)), keyEquivalent: "n"))
         menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "ブックマークをインポート…",
+                                action: #selector(BookmarkList.importBookmarks(_:)), keyEquivalent: "I"))
+        menu.addItem(NSMenuItem(title: "ブックマークをエクスポート…",
+                                action: #selector(BookmarkList.exportBookmarks(_:)), keyEquivalent: "E"))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "ウィンドウを閉じる",
                                 action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
         let item = NSMenuItem()
